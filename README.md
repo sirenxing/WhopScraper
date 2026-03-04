@@ -15,6 +15,9 @@
 ### 3. 监听消息
 ![](./images/terminal_3.png)
 
+### 4. 分析股票做T情况
+![](./images/terminal_4.png)
+
 ## 安装依赖
 
 ```bash
@@ -175,6 +178,36 @@ python3 scripts/parser/filter_target_stock.py tsll
 
 # 指定输入与输出路径
 python3 scripts/parser/filter_target_stock.py HIMS --input data/stock_origin_message.json --output tmp/stock/origin_HIMS_message.json
+```
+
+### 股票做T情况分析
+
+分析单只股票的买卖记录，识别哪些买入成本尚未通过当日 T 交易消除；结果以表格形式输出到终端（未 T 出的买入仓位、已完成 T 交易、超额卖出、汇总）。
+
+**数据来源**：不指定 `--file` 时从长桥 API 拉取该股票最近 N 天已成交订单（含当日已成交）；指定 `--file` 时从本地 JSON 读取。
+
+**匹配策略**：卖单在「买入价 < 卖价」的批次中按**买入价从高到低**匹配，优先消掉高成本仓位。
+
+```bash
+python3 scripts/analysis/t_trade_analysis.py [TICKER] [--file PATH] [--days N]
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `TICKER` | 股票代码（如 TSLL，不含 .US） | `TSLL` |
+| `--file` | 交易记录 JSON 路径 | 不指定则走长桥 API |
+| `--days` | API 拉取最近天数（仅在不使用 `--file` 时生效） | `90` |
+
+示例：
+```bash
+# 从长桥 API 拉取 TSLL 最近 90 天（含当日）并分析
+python3 scripts/analysis/t_trade_analysis.py TSLL
+
+# 拉取最近 60 天
+python3 scripts/analysis/t_trade_analysis.py TSLL --days 60
+
+# 从本地文件分析
+python3 scripts/analysis/t_trade_analysis.py TSLL --file data/stock_trade_records.json
 ```
 
 ## 文档索引
