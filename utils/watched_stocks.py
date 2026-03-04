@@ -10,7 +10,7 @@ import time
 from typing import Set, Optional, Dict, Any
 
 DEFAULT_WATCHED_STOCKS_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "data", "watched_stocks.json"
+    os.path.dirname(os.path.dirname(__file__)), "config", "watched_stocks.json"
 )
 
 _CACHE_TTL = 1.0

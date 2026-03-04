@@ -6,11 +6,15 @@
    提取并按 domID 去重保存，避免 DOM 回收导致丢失；直到连续 2 轮无新消息或达到最大轮数后结束。
 2. 定时抓取（AUTO_SCROLL_HISTORY=false）：有界面打开，每 N 秒抓取当前 DOM，需手动滚动，Ctrl+C 结束。
 用法：
-  python3 scripts/capture_stock_messages.py [URL]
+  python3 scripts/capture_stock_messages.py [URL] [--origin PATH] [--parsed PATH] [--export-html [PATH]]
+  默认路径（不再从 env 读取）：
+    --origin  默认 tmp/stock/origin/default.json
+    --parsed  默认 tmp/stock/parsed_message.json
+    --export-html  默认 tmp/stock/page_html.html（仅导出 HTML 后退出）
   环境变量：AUTO_SCROLL_HISTORY、SCROLL_TOP_WAIT_MS、MAX_HISTORY_ROUNDS、CAPTURE_INTERVAL_SEC；
            USE_WHEEL_SCROLL、WHEEL_SCROLL_STEPS、WHEEL_SCROLL_DELTA。
-  导出 HTML：加参数 --export-html 或设 EXPORT_HTML=1，仅打开页面并将当前 HTML 保存到 test/data/stock_html.html 后退出。
 """
+import argparse
 import asyncio
 import json
 import os
@@ -31,23 +35,64 @@ from parser.stock_parser import StockParser
 from utils.watched_stocks import get_watched_tickers
 
 
-def _output_paths():
-    """原始消息与解析结果输出路径，可由环境变量 STOCK_ORIGIN_OUTPUT_PATH、STOCK_PARSED_OUTPUT_PATH 覆盖。"""
-    origin = os.getenv("STOCK_ORIGIN_OUTPUT_PATH", "").strip()
-    parsed = os.getenv("STOCK_PARSED_OUTPUT_PATH", "").strip()
-    origin_path = Path(origin) if origin else _project_root / "data" / "stock_origin_message.json"
-    if not origin_path.is_absolute():
-        origin_path = _project_root / origin_path
-    if not parsed:
-        parsed_path = origin_path.parent / "stock_parsed_message.json"
-    else:
-        parsed_path = Path(parsed) if Path(parsed).is_absolute() else _project_root / parsed
-    return origin_path, parsed_path
+# 默认输出路径（不再从 env 读取，可通过脚本入参 --origin / --parsed / --export-html 覆盖）
+OUTPUT_PATH = _project_root / "tmp" / "stock" / "origin" / "default.json"
+PARSED_OUTPUT_PATH = _project_root / "tmp" / "stock" / "parsed_message.json"
+EXPORT_HTML_PATH = _project_root / "tmp" / "stock" / "page_html.html"
 
 
-OUTPUT_PATH = _project_root / "data" / "stock_origin_message.json"  # 默认，main 内按 env 覆盖
-PARSED_OUTPUT_PATH = _project_root / "data" / "stock_parsed_message.json"
-EXPORT_HTML_PATH = _project_root / "test" / "data" / "stock_html.html"
+def _parse_args():
+    """解析命令行：URL（可选）、--origin、--parsed、--export-html。"""
+    parser = argparse.ArgumentParser(
+        description="股票页消息抓取：默认自动历史分页，可指定输出路径。"
+    )
+    parser.add_argument(
+        "url",
+        nargs="?",
+        default="",
+        help="股票页 URL，不传则从 STOCK_PAGE_URL 或 config 读取",
+    )
+    parser.add_argument(
+        "--origin",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=f"原始消息输出路径（默认: {OUTPUT_PATH.relative_to(_project_root)})",
+    )
+    parser.add_argument(
+        "--parsed",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=f"解析结果输出路径（默认: {PARSED_OUTPUT_PATH.relative_to(_project_root)})",
+    )
+    parser.add_argument(
+        "--export-html",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="仅打开页面并导出 HTML 后退出；可选指定路径，不指定则用默认",
+    )
+    args = parser.parse_args()
+
+    def _resolve_path(p: str, default: Path) -> Path:
+        if not p:
+            return default
+        path = Path(p)
+        if not path.is_absolute():
+            path = _project_root / path
+        return path.resolve()
+
+    origin_path = _resolve_path(args.origin, OUTPUT_PATH)
+    parsed_path = _resolve_path(args.parsed, PARSED_OUTPUT_PATH)
+    export_html_path = _resolve_path(args.export_html, EXPORT_HTML_PATH) if args.export_html is not None else None
+    return argparse.Namespace(
+        url=(args.url or "").strip(),
+        origin_path=origin_path,
+        parsed_path=parsed_path,
+        export_html_path=export_html_path,
+    )
 
 
 def _message_row_from_group(message) -> dict:
@@ -253,10 +298,9 @@ async def _run_auto_history(page, extractor, wait_ms: int, max_rounds: int, outp
 
 
 async def main():
-    # URL：命令行参数 > 环境变量 STOCK_PAGE_URL > .env PAGES 首个 stock
-    url = None
-    if len(sys.argv) > 1 and sys.argv[1].startswith("http"):
-        url = sys.argv[1].strip()
+    args = _parse_args()
+    # URL：入参 url > 环境变量 STOCK_PAGE_URL > .env PAGES 首个 stock
+    url = args.url
     if not url:
         url = os.getenv("STOCK_PAGE_URL", "").strip()
     if not url:
@@ -267,7 +311,7 @@ async def main():
             return
         url, _, name = stock_pages[0]
     print(f"目标页面: {url}")
-    output_path, parsed_path = _output_paths()
+    output_path, parsed_path = args.origin_path, args.parsed_path
     print(f"输出路径: 原始消息 -> {output_path}，解析结果 -> {parsed_path}")
 
     # 本脚本固定有界面模式，启动时最大化窗口便于消息区全屏、滚轮落在正确区域
@@ -293,12 +337,12 @@ async def main():
 
     await asyncio.sleep(2)
 
-    # 仅导出 HTML 到本地后退出
-    if os.getenv("EXPORT_HTML", "").strip() in ("1", "true", "yes") or "--export-html" in sys.argv:
+    # 仅导出 HTML 到本地后退出（由入参 --export-html [PATH] 指定）
+    if args.export_html_path is not None:
         html = await page.content()
-        EXPORT_HTML_PATH.parent.mkdir(parents=True, exist_ok=True)
-        EXPORT_HTML_PATH.write_text(html, encoding="utf-8")
-        print(f"已导出 HTML -> {EXPORT_HTML_PATH}")
+        args.export_html_path.parent.mkdir(parents=True, exist_ok=True)
+        args.export_html_path.write_text(html, encoding="utf-8")
+        print(f"已导出 HTML -> {args.export_html_path}")
         await browser.close()
         return
 

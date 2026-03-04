@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-从原始消息 JSON 中过滤出指定股票（ticker）相关的消息，导出到 tmp/stock/origin_<ticker>_message.json。
+从原始消息 JSON 中过滤出指定股票（ticker）相关的消息，导出到 tmp/stock/origin/<TICKER>.json。
 匹配规则：仅看 content 中是否出现该 ticker（按整词、不区分大小写），不看 history。
 用法:
   python3 scripts/parser/filter_target_stock.py TICKER [--input PATH] [--output PATH]
-  默认输入：tmp/stock/origin_message.json
-  默认输出：tmp/stock/origin_<TICKER>_message.json
+  默认输入：tmp/stock/origin/default.json
+  默认输出：tmp/stock/origin/<TICKER>.json
 """
 import argparse
 import json
@@ -58,26 +58,26 @@ def _parse_args():
         "--input",
         type=str,
         default=None,
-        help="原始消息 JSON 路径；默认 tmp/stock/origin_message.json",
+        help="原始消息 JSON 路径；默认 tmp/stock/origin/default.json",
     )
     parser.add_argument(
         "--output",
         type=str,
         default=None,
-        help="导出路径；默认 tmp/stock/origin_<ticker>_message.json",
+        help="导出路径；默认 tmp/stock/origin/<TICKER>.json",
     )
     args = parser.parse_args()
     args.ticker = (args.ticker or "").strip().upper()
     if not args.ticker:
         parser.error("请提供 ticker")
     if args.input is None:
-        args.input = _project_root / "tmp" / "stock" / "origin_message.json"
+        args.input = _project_root / "tmp" / "stock" / "origin" / "default.json"
     else:
         args.input = Path(args.input)
     if not args.input.is_absolute():
         args.input = _project_root / args.input
     if args.output is None:
-        args.output = _project_root / "tmp" / "stock" / f"origin_{args.ticker}_message.json"
+        args.output = _project_root / "tmp" / "stock" / "origin" / f"{args.ticker}.json"
     else:
         args.output = Path(args.output)
     if not args.output.is_absolute():

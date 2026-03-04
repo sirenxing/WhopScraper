@@ -3,7 +3,7 @@
 从指定股票的 origin_<TICKER>_message.json 生成 check_<TICKER>_message.json。
 每条消息用 StockParser 解析，check 字段格式与 data/check.json 一致，symbol 使用传入的 TICKER。
 
-仓位计算规则（基于 data/watched_stocks.json）：
+仓位计算规则（基于 config/watched_stocks.json）：
   - 默认买入/卖出仓位 = bucket * position（整数股数）
   - 卖出一半（sell_quantity == '1/2'）= bucket * position * 0.5
   - 小仓位（position_size/sell_quantity == '小仓位'）= bucket * position（同常规仓）
@@ -15,8 +15,8 @@
 
 用法:
   python3 scripts/parser/generate_check_stock.py TICKER [--input PATH] [--output PATH]
-  默认输入：tmp/stock/origin_<TICKER>_message.json
-  默认输出：tmp/stock/check_<TICKER>_message.json
+  默认输入：tmp/stock/origin/<TICKER>.json
+  默认输出：tmp/stock/parsed/<TICKER>.json
 """
 import argparse
 import json
@@ -130,22 +130,22 @@ def _instruction_to_check(inst, message_timestamp: str, symbol: str) -> Optional
 
 
 def _parse_args():
-    parser = argparse.ArgumentParser(description="根据原始消息生成 check_<TICKER>_message.json")
+    parser = argparse.ArgumentParser(description="根据原始消息生成 parsed/<TICKER>.json")
     parser.add_argument("ticker", type=str, help="股票代码，如 TSLL")
-    parser.add_argument("--input", type=str, default=None, help="原始消息 JSON 路径")
-    parser.add_argument("--output", type=str, default=None, help="输出 check JSON 路径（默认 tmp/stock/check_<TICKER>_message.json）")
+    parser.add_argument("--input", type=str, default=None, help="原始消息 JSON 路径（默认 tmp/stock/origin/<TICKER>.json）")
+    parser.add_argument("--output", type=str, default=None, help="输出 check JSON 路径（默认 tmp/stock/parsed/<TICKER>.json）")
     args = parser.parse_args()
     args.ticker = (args.ticker or "").strip().upper()
     if not args.ticker:
         parser.error("请提供 ticker")
     if args.input is None:
-        args.input = _project_root / "tmp" / "stock" / f"origin_{args.ticker}_message.json"
+        args.input = _project_root / "tmp" / "stock" / "origin" / f"{args.ticker}.json"
     else:
         args.input = Path(args.input)
     if not args.input.is_absolute():
         args.input = _project_root / args.input
     if args.output is None:
-        args.output = _project_root / "tmp" / "stock" / f"check_{args.ticker}_message.json"
+        args.output = _project_root / "tmp" / "stock" / "parsed" / f"{args.ticker}.json"
     else:
         args.output = Path(args.output)
     if not args.output.is_absolute():
