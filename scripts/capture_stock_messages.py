@@ -8,7 +8,7 @@
 用法：
   python3 scripts/capture_stock_messages.py [URL] [--origin PATH] [--parsed PATH] [--export-html [PATH]]
   默认路径（不再从 env 读取）：
-    --origin  默认 tmp/stock/origin_message.json
+    --origin  默认 tmp/stock/origin/default.json
     --parsed  默认 tmp/stock/parsed_message.json
     --export-html  默认 tmp/stock/page_html.html（仅导出 HTML 后退出）
   环境变量：AUTO_SCROLL_HISTORY、SCROLL_TOP_WAIT_MS、MAX_HISTORY_ROUNDS、CAPTURE_INTERVAL_SEC；
@@ -36,7 +36,7 @@ from utils.watched_stocks import get_watched_tickers
 
 
 # 默认输出路径（不再从 env 读取，可通过脚本入参 --origin / --parsed / --export-html 覆盖）
-OUTPUT_PATH = _project_root / "tmp" / "stock" / "origin_message.json"
+OUTPUT_PATH = _project_root / "tmp" / "stock" / "origin" / "default.json"
 PARSED_OUTPUT_PATH = _project_root / "tmp" / "stock" / "parsed_message.json"
 EXPORT_HTML_PATH = _project_root / "tmp" / "stock" / "page_html.html"
 

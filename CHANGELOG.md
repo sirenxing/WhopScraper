@@ -1,6 +1,54 @@
 # CHANGELOG
 
-##[2026-03-02]修护main.py在windows下的报错`loop.add_signal_handler(sig, signal_handler) NotImplementedError`
+
+## [2026-03-03] 股票解析：批量补全口语化正则（TSLL 159→210/282，NVDL 53→88/129）
+
+基于 `check_TSLL_message.json`（123 条失败）和 `check_NVDL_message.json`（76 条失败）逐条分析，批量补全正则。
+
+### 修复现有 pattern
+- **BUY_PATTERN_4**：`\s+` → `\s*`，`(?:在|可以)` 改可选，允许 `[\s\S]{0,10}?` 间隔，补充"建小仓位底仓"等变体
+- **BUY_PATTERN_5**：允许 price 与"加了"间有中文间隔，加 `加(?!仓)` 排除误匹配
+- **BUY_RANGE_BUILD**：新增"加仓""开仓""加一半""分批进/加"
+- **BUY_RANGE_ABSORB**：添加独立"吸"（`吸(?!筹)`）
+- **BUY_ABSORB_SINGLE**：添加独立"吸"，允许"可以"前缀，"吸一半"后缀
+- **BUY_PRICE_ABSORB**：添加独立"吸"，允许"也是"前缀
+- **SELL_RANGE_REDUCE_SUFFIX**：`减` 可独立匹配，新增"减持"
+- **SELL_PRICE_OUT_REF_SUFFIX**：允许"附近"在"出"前，支持"再次出""那部分""低吸的"
+
+### 新增 prefix pattern（ticker 在句首）
+- **SELL_TICKER_OUT_PRICE_PART**：ticker + 出 + price + 那部分（"nvdl…出84.5那部分"）
+- **SELL_TICKER_CAN_PRICE_OUT**：ticker + 可以 + price + 出（"nvdl可以86.75 出"）
+- **SELL_HALF_AT_PRICE**：ticker + 一半 + 在 + price + 出（"nvdl之前剩下的一半在107.5出"）
+- **SELL_ALSO_OUT_SOME**：ticker + price + 也出点（"nvdl…90.9附近也出点"）
+- **BUY_TICKER_ACTION_RANGE**：ticker + 吸/加/接 + range（"nvdl…吸 83-83.5"）
+
+### 新增 suffix pattern（ticker 在句尾/句中）
+- **SELL_SINGLE_REDUCE_SUFFIX**：单价 + 减/减仓 + ticker
+- **SELL_REDUCE_HALF_REF_SUFFIX**：单价 + 减一半 + 参考价 + ticker
+- **SELL_OUT_HALF_NO_REF_SUFFIX**：单价 + 出一半 + ticker（无 ref）
+- **SELL_APPROX_OUT_TICKER_SUFFIX**：单价 + 附近出 + gap + ticker
+- **BUY_PRICE_ACTION_SUFFIX**：价格 + 吸了/接回/加了 + ticker
+- **BUY_PRICE_ADD_POSITION_SUFFIX**：价格 + 加仓了 + ticker（紧跟）
+- **BUY_POSITION_TICKER_ACTION**：价格 + 仓位描述 + ticker + 接回/吸回
+- **BUY_ACTION_TICKER_AT_PRICE**：回吸了 + ticker + 在 + 价格
+- **BUY_APPROX_ACTION_TICKER_SUFFIX**：价格 + 吸/接/加 + gap + ticker
+- **BUY_OPEN_POSITION_TICKER_SUFFIX**：价格 + 开仓了 + 仓位 + ticker
+
+### 增强 fallback hint（关注列表匹配后）
+- **SELL_HINT_REDUCE**：新增，匹配 price + 减
+- **SELL_HINT_SINGLE_OUT**：放宽，允许"先出""可以出"
+- **BUY_HINT_SINGLE**：扩展动作词，加负向断言排除误匹配
+- **BUY_HINT_RANGE**：扩展分批进/分批加/吸/进/接
+
+## [2026-03-02] 股票解析：关注列表先匹配再解析价格/数量
+
+- **`StockParser` 关注列表 fallback**：当正则未解析出 ticker 时，用 `data/watched_stocks.json` 中的关注股票在消息中做**整词匹配**；命中后再用仅含价格/操作/数量的正则解析买卖与数量。
+- 新增 `_watched_tickers_in_message(message)`、`_parse_with_watched_ticker(message, message_id, ticker)` 及一组 SELL_HINT_* / BUY_HINT_* 正则（不依赖 ticker 在句中的位置），用于 fallback 解析。
+- 解析顺序不变：先按原有规则解析，全部失败后再尝试「关注列表命中 + 价格/数量正则」。
+- **整词边界**：关注列表匹配使用 `(?:^|[^a-zA-Z])ticker(?:$|[^a-zA-Z])`，避免中文后接 ticker（如「一半tsll」）因 `\b` 与 Unicode 行为导致匹配不到。
+- **移除**：句尾 ticker 专用逻辑（SELL_RANGE_CAN_OUT_SUFFIX 及对应处理），改由上述 fallback 统一覆盖。
+
+## [2026-03-02] 修护 main.py 在 windows 下的报错 `loop.add_signal_handler(sig, signal_handler) NotImplementedError`
 
 ## [2026-02-28] 账户持仓表格化显示 + 订单成交更新
 

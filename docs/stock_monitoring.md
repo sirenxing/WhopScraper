@@ -18,7 +18,7 @@
 
 ## 关注股票列表与仓位配置
 
-- **路径**：`data/watched_stocks.json`（可通过环境变量 `WATCHED_STOCKS_PATH` 覆盖）。
+- **路径**：`config/watched_stocks.json`（可通过环境变量 `WATCHED_STOCKS_PATH` 覆盖）。
 - **格式**：按 ticker 配置总仓位**股数**与常规仓占比；常规仓 = position × bucket，常规仓的一半 = position × bucket × 0.5（具体股数）。
   ```json
   {
@@ -41,7 +41,7 @@
 - **消息导出**：`scripts/scraper/export_page_message.py`  
   - 全屏打开浏览器，自动滚动抓取消息并导出到指定路径。  
   - 用法：`python3 scripts/scraper/export_page_message.py [--type stock|option] [--output PATH] [--url URL]`  
-  - 默认：`--type stock`，`--output tmp/<type>/origin_message.json`；不传 `--url` 时从 `.env` 的 `PAGES` 中按 type 取首个页面。
+  - 默认：`--type stock`，`--output tmp/stock/origin/default.json`（stock 类型）；不传 `--url` 时从 `.env` 的 `PAGES` 中按 type 取首个页面。
 - **HTML 导出**：`scripts/scraper/export_page_html.py`  
   - 打开目标页面，将当前 HTML 导出到指定路径。  
   - 用法：`python3 scripts/scraper/export_page_html.py [--type stock|option] [--output PATH] [--url URL]`  
@@ -121,7 +121,7 @@
 | 常规仓（默认） | `position × bucket` |
 | 一半 / 小仓位 / 常规仓的一半 | `position × bucket × 0.5` |
 
-> 说明：`position` 和 `bucket` 来自 `data/watched_stocks.json`，如 `{"tsll": {"position": 2000, "bucket": 0.3}}`，常规仓 = 600 股，一半 = 300 股。
+> 说明：`position` 和 `bucket` 来自 `config/watched_stocks.json`，如 `{"tsll": {"position": 2000, "bucket": 0.3}}`，常规仓 = 600 股，一半 = 300 股。
 
 ### 买入价格选择逻辑
 
@@ -139,5 +139,5 @@
 | `parser/stock_context_resolver.py` | 股票页解析入口 |
 | `utils/watched_stocks.py` | 关注列表、股数/常规仓比例、`resolve_position_size_to_shares` |
 | `utils/stock_trade_records.py` | 股票交易记录读写、按参考价/日期解析卖出数量 |
-| `data/watched_stocks.json` | 关注列表数据（position=股数，bucket=常规仓比例） |
+| `config/watched_stocks.json` | 关注列表数据（position=股数，bucket=常规仓比例） |
 | `data/stock_origin_message.json` | 股票页原始消息（监控与抓取脚本均写入） |

@@ -1,6 +1,6 @@
 """
 正股页面消息处理测试
-从 tmp/stock/origin_message.json 抽取真实消息，验证：
+从 tmp/stock/origin/default.json 抽取真实消息，验证：
 1. 消息解析：买入/卖出/清仓/修改订单
 2. 日志输出：display 方法正常工作
 3. 订单校验：买入/卖出价格与数量
@@ -19,7 +19,7 @@ from models.message import MessageGroup
 from models.record import Record
 from models.record_manager import RecordManager
 
-ORIGIN_MESSAGE_PATH = os.path.join(os.path.dirname(__file__), '..', 'tmp', 'stock', 'origin_message.json')
+ORIGIN_MESSAGE_PATH = os.path.join(os.path.dirname(__file__), '..', 'tmp', 'stock', 'origin', 'default.json')
 
 
 def load_messages():

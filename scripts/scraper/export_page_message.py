@@ -4,7 +4,7 @@
 不依赖环境变量，通过命令行参数控制；未传参数时使用默认配置。
 用法:
   python3 scripts/scraper/export_page_message.py [--type stock|option] [--output PATH] [--url URL]
-  默认：--type stock，--output tmp/${type}/origin_message.json；可选 --url 指定页面，否则从 PAGES 按 type 取首个。
+  默认：--type stock，--output tmp/stock/origin/default.json（stock 类型）或 tmp/<type>/origin_message.json（其他类型）；可选 --url 指定页面，否则从 PAGES 按 type 取首个。
 """
 import argparse
 import asyncio
@@ -219,7 +219,10 @@ def _parse_args():
     )
     args = parser.parse_args()
     if args.output is None:
-        args.output = str(_project_root / "tmp" / args.type / "origin_message.json")
+        if args.type == "stock":
+            args.output = str(_project_root / "tmp" / "stock" / "origin" / "default.json")
+        else:
+            args.output = str(_project_root / "tmp" / args.type / "origin_message.json")
     out_path = Path(args.output)
     if not out_path.is_absolute():
         out_path = _project_root / out_path
