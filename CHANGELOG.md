@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [2026-03-05] 股票仓位表格内展示待 T 出分析
+
+- **broker/position_manager.py**：同步/更新股票仓位时，对每只股票用与 `t_trade_analysis` 一致的逻辑（高价优先匹配）计算待 T 出批次，写入 `positions_data` 的 `t_unmatched_buys`、`t_unmatched_qty`、`t_weighted_avg`；`_analyze_t_trades` 卖单匹配改为按买入价从高到低
+- **utils/rich_logger.py**：`print_position_table` 在每只股票的交易记录下方、表格内增加「待 T 出」区块：汇总行（共 N 股 均价 $X.XX）+ 各批次行（MM-DD $价格 剩余 N）
+- 订单成交后单 symbol 持仓弹窗（`_log_position_update`）同样附带该股票的 T 分析
+
 ## [2026-03-05] n8n 兜底解析 + 清仓关键词优化
 
 ### 新增

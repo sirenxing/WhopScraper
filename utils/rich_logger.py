@@ -554,6 +554,9 @@ class RichLogger:
                 - symbol, quantity, unit, avg_cost, position_value, pct
                 - stop_loss: Optional[float]
                 - records: list[dict] 交易记录
+                - t_unmatched_buys: Optional[list] 待 T 出买入批次（股票模式，与 t_trade_analysis 一致）
+                - t_unmatched_qty: Optional[int] 待 T 出总股数
+                - t_weighted_avg: Optional[float] 待 T 出加权均价
             account: 可选账户摘要 dict (available_cash, cash, total_assets, is_paper)
             config_lines: 可选配置信息列表（键值对字符串，如 "账户类型：模拟"）
         """
@@ -682,6 +685,37 @@ class RichLogger:
                         ),
                         "", "", "", "",
                     )
+
+                # 待 T 出仓位（股票模式，与 t_trade_analysis 一致：高价优先匹配后的未消批次）
+                t_lots = pos.get("t_unmatched_buys") or []
+                if t_lots:
+                    uq = pos.get("t_unmatched_qty", 0) or sum(
+                        lot.get("remaining_qty", 0) for lot in t_lots
+                    )
+                    avg = pos.get("t_weighted_avg")
+                    if avg is None and uq:
+                        avg = sum(
+                            lot.get("price", 0) * lot.get("remaining_qty", 0)
+                            for lot in t_lots
+                        ) / uq
+                    avg = avg or 0
+                    pos_table.add_row(
+                        Text.from_markup(
+                            f"[bold yellow]  [待T][/bold yellow] 共 {int(uq)} 股 均价 ${avg:.2f}"
+                        ),
+                        "", "", "", "",
+                    )
+                    for lot in sorted(t_lots, key=lambda x: (x.get("ts") or "", x.get("price", 0))):
+                        ts_str = lot.get("ts") or ""
+                        ts_short = ts_str[5:10] if isinstance(ts_str, str) and len(ts_str) >= 10 else (ts_str or "-")
+                        price = lot.get("price", 0)
+                        rem = lot.get("remaining_qty", 0)
+                        pos_table.add_row(
+                            Text.from_markup(
+                                f"[dim]    {ts_short} ${price:.2f} 剩余 {int(rem)}[/dim]"
+                            ),
+                            "", "", "", "",
+                        )
 
                 if i < len(positions) - 1:
                     pos_table.add_section()

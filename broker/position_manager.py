@@ -553,7 +553,7 @@ class PositionManager:
                 self._normalize_record(r, ts)
                 for r in sorted(records, key=lambda r: r.get("submitted_at") or "")
             ]
-            positions_data.append({
+            row = {
                 "symbol": symbol,
                 "quantity": pos.quantity,
                 "unit": unit,
@@ -562,7 +562,21 @@ class PositionManager:
                 "pct": pct,
                 "stop_loss": getattr(pos, "stop_loss_price", None) or None,
                 "records": norm_records,
-            })
+            }
+            if is_stock:
+                raw_records = self.trade_records.get(symbol, [])
+                if raw_records:
+                    t_result = self._analyze_t_trades(raw_records)
+                    unmatched = t_result.get("unmatched", [])
+                    if unmatched:
+                        row["t_unmatched_buys"] = unmatched
+                        uq = sum(u["remaining_qty"] for u in unmatched)
+                        row["t_unmatched_qty"] = uq
+                        row["t_weighted_avg"] = (
+                            sum(u["price"] * u["remaining_qty"] for u in unmatched) / uq
+                            if uq else 0
+                        )
+            positions_data.append(row)
         else:
             positions_data.append({
                 "symbol": symbol,
@@ -695,7 +709,7 @@ class PositionManager:
                 self._normalize_record(r, ts)
                 for r in sorted(records, key=lambda r: r.get("submitted_at") or "")
             ]
-            positions_data.append({
+            row = {
                 "symbol": sym,
                 "quantity": pos.quantity,
                 "unit": unit,
@@ -704,7 +718,19 @@ class PositionManager:
                 "pct": pct,
                 "stop_loss": getattr(pos, "stop_loss_price", None) or None,
                 "records": norm_records,
-            })
+            }
+            if is_stock and records:
+                t_result = self._analyze_t_trades(records)
+                unmatched = t_result.get("unmatched", [])
+                if unmatched:
+                    row["t_unmatched_buys"] = unmatched
+                    uq = sum(u["remaining_qty"] for u in unmatched)
+                    row["t_unmatched_qty"] = uq
+                    row["t_weighted_avg"] = (
+                        sum(u["price"] * u["remaining_qty"] for u in unmatched) / uq
+                        if uq else 0
+                    )
+            positions_data.append(row)
 
         rlogger.print_position_table(
             None, positions_data, account=account, config_lines=config_lines,
@@ -716,7 +742,7 @@ class PositionManager:
     def _analyze_t_trades(trades: List[Dict]) -> Dict:
         """
         计算哪些买入批次尚未被 T 出。
-        卖出时 FIFO 匹配买入价 < 卖出价的批次；超额卖出记入缓冲，
+        卖出时按买入价从高到低匹配（优先消掉高成本仓位）；超额卖出记入缓冲，
         后续出现更低买入价时逆向消除。
         """
         def _q(v):
@@ -768,7 +794,7 @@ class PositionManager:
 
             elif side == "SELL":
                 remaining = qty
-                for lot in open_buys:
+                for lot in sorted(open_buys, key=lambda x: (-x["price"], x["ts"])):
                     if lot["remaining_qty"] > 0 and lot["price"] < price and remaining > 0:
                         mq = min(remaining, lot["remaining_qty"])
                         total_matched_qty += mq
