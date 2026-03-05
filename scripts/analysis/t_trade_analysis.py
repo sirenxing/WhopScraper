@@ -5,7 +5,7 @@
 分析单一股票的买卖记录，找出哪些买入成本尚未通过 T 交易消除。
 
 匹配规则：
-  1. 以 A2 价格卖出 B2 股时，匹配之前买入价格 < A2 的记录（FIFO，最早买入优先）
+  1. 以 A2 价格卖出 B2 股时，在「买入价 < A2」的批次中按买入价从高到低匹配（优先消掉高成本仓位）
      - 成功匹配的 B2 股视为"T完成"，不再关注
      - 剩余 B1-B2 股仍需后续 T 交易消除
   2. 若卖出量超过所有可匹配买入量，超额部分计入"待匹配卖出"缓冲
@@ -110,8 +110,8 @@ def analyze_t_trades(trades: List[Dict]) -> Dict:
 
         elif side == "SELL":
             remaining = qty
-            # 按 FIFO 匹配价格低于卖价的开放买入批次
-            for lot in open_buys:
+            # 按买入价从高到低匹配（优先消掉高成本仓位），同价按时间先后
+            for lot in sorted(open_buys, key=lambda x: (-x["price"], x["ts"])):
                 if lot["remaining_qty"] > 0 and lot["price"] < price and remaining > 0:
                     mq = min(remaining, lot["remaining_qty"])
                     matched.append({

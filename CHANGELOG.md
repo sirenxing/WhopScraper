@@ -42,7 +42,6 @@
 - ✅ `4.8-5附近出剩下三分之一` → CLOSE, price=4.8
 - ✅ 无法解析的消息 → `PARSE_ERROR`
 
----
 ## [2026-03-04] T 交易分析：支持长桥 API 拉取最近 90 天成交（含当日）
 
 - **scripts/analysis/t_trade_analysis.py**：默认从长桥 API 获取指定股票最近 90 天已成交订单并做 T 交易分析
