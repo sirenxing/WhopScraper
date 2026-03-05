@@ -65,15 +65,16 @@ class _TagData:
 
 class _TradeTableStage:
     """交易流程表格中一个阶段的数据"""
-    __slots__ = ("tag", "rows", "tag_suffix", "tag_style", "diff_ms")
+    __slots__ = ("tag", "rows", "tag_suffix", "tag_style", "diff_ms", "position_table_data")
 
     def __init__(self, tag: str, rows: list, tag_suffix: str,
-                 tag_style: str, diff_ms: int):
+                 tag_style: str, diff_ms: int, position_table_data: Optional[list] = None):
         self.tag = tag
         self.rows = rows
         self.tag_suffix = tag_suffix
         self.tag_style = tag_style
         self.diff_ms = diff_ms
+        self.position_table_data = position_table_data  # 持仓更新阶段：positions_data 列表
 
 
 class TradeLogFlow:
@@ -109,6 +110,10 @@ class RichLogger:
         self._order_to_dom: Dict[str, str] = {}
         self._current_dom_id: Optional[str] = None
         self._trade_live: Optional[Live] = None
+        # 订单成交后待并入同一流程的持仓数据（order_id -> positions_data）
+        self._pending_position_stages: Dict[str, list] = {}
+        # 订单成交后卖出利润（order_id -> profit），用于订单推送阶段展示
+        self._pending_order_profit: Dict[str, float] = {}
 
     @property
     def console(self) -> Console:
@@ -479,18 +484,39 @@ class RichLogger:
                 flow.order_id = order_id
                 self._order_to_dom[order_id] = flow.dom_id
 
+    def is_order_in_flow(self, order_id: str) -> bool:
+        """该 order_id 是否已注册到当前某条交易流程（等待推送）。"""
+        with self._lock:
+            return bool(order_id and order_id in self._order_to_dom)
+
+    def set_pending_position_stage(self, order_id: str, positions_data: list) -> None:
+        """订单成交后设置待并入该流程的持仓数据；trade_push_update(terminal=True) 时会并入同一表格。仅当 order_id 在 flow 中时写入。"""
+        with self._lock:
+            if order_id and order_id in self._order_to_dom:
+                self._pending_position_stages[order_id] = positions_data
+
+    def set_pending_order_profit(self, order_id: str, profit: float) -> None:
+        """订单成交后设置该笔卖出利润，供订单推送阶段展示「+$xxx」。仅当 order_id 在 flow 中时写入。"""
+        with self._lock:
+            if order_id and order_id in self._order_to_dom:
+                self._pending_order_profit[order_id] = profit
+
     def trade_push_update(self, order_id: str,
                           rows: Optional[List[Tuple[str, str]]] = None,
                           tag_style: str = "bold white",
-                          terminal: bool = False) -> None:
+                          terminal: bool = False,
+                          tag_suffix: Optional[str] = None,
+                          trade_record_line: Optional[Tuple[str, str, int, float]] = None) -> None:
         """
         根据 order_id 找到对应交易流程并追加订单推送阶段。
 
         Args:
             order_id: 订单 ID
-            rows: 推送详情键值对
+            rows: 推送详情键值对（若提供 trade_record_line 则优先用其生成单行）
             tag_style: 标签样式
             terminal: 是否为终态（Filled/Rejected），True 时结束 Live
+            tag_suffix: 阶段标题后缀，如 " [green]Filled[/green]"
+            trade_record_line: (date_str, side, qty, price) 用于生成一行交易记录，卖出时自动追加利润
         """
         with self._lock:
             target_id = self._order_to_dom.get(order_id)
@@ -502,9 +528,30 @@ class RichLogger:
             now = datetime.now()
             diff_ms = int((now - flow.base_time).total_seconds() * 1000)
 
+            stage_rows: List[Tuple[str, str]] = []
+            if trade_record_line:
+                date_str, side, qty, price = trade_record_line
+                price_str = f"{price:.2f}".rstrip("0").rstrip(".") if isinstance(price, (int, float)) else str(price)
+                side_upper = (side or "BUY").upper()
+                side_short = side_upper.ljust(4)[:4]
+                side_markup = f"[green]{side_short}[/green]" if side_upper == "BUY" else f"[yellow]{side_short}[/yellow]"
+                line = f"[dim]{date_str} {side_markup} {qty} @{price_str}[/dim]"
+                if side_upper == "SELL":
+                    profit = self._pending_order_profit.pop(order_id, None)
+                    if profit is not None:
+                        # 去掉前导 +，正数绿色、负数红色
+                        color = "green" if profit >= 0 else "red"
+                        line += f"  [{color}]${profit:,.2f}[/{color}]"
+                stage_rows.append(("", line))
+            else:
+                stage_rows = list(rows or [])
+
             stage = _TradeTableStage(
-                tag="订单推送", rows=rows or [], tag_suffix="",
-                tag_style=tag_style, diff_ms=diff_ms,
+                tag="订单推送",
+                rows=stage_rows,
+                tag_suffix=tag_suffix or "",
+                tag_style=tag_style,
+                diff_ms=diff_ms,
             )
             existing_idx = next(
                 (i for i in range(len(flow.stages) - 1, -1, -1)
@@ -518,6 +565,8 @@ class RichLogger:
             self._update_trade_display()
 
             if terminal:
+                # 不再追加「持仓更新」阶段，订单推送里已含交易记录
+                self._pending_position_stages.pop(order_id, None)
                 panel = self._render_trade_panel(flow)
                 del self._order_to_dom[order_id]
                 del self._trade_flows[target_id]
@@ -756,8 +805,11 @@ class RichLogger:
 
             header_elems.append(f"[bold blue]{stage.tag}[/bold blue]")
 
-            if stage.diff_ms > 0 and stage.tag_suffix:
-                header_elems.append(f"[dim]{stage.tag_suffix}[/dim]")
+            if stage.tag_suffix:
+                # 已含 markup（如 [green]Filled[/green]）则原样追加，否则用 dim
+                header_elems.append(
+                    stage.tag_suffix if "[" in stage.tag_suffix else f"[dim]{stage.tag_suffix}[/dim]"
+                )
 
             stage_parts.append(Text.from_markup(f"[bold]{' '.join(header_elems)}[/bold]"))
 
@@ -805,11 +857,72 @@ class RichLogger:
 
                 _flush_detail()
 
+            if getattr(stage, "position_table_data", None):
+                stage_parts.append(self._build_position_inner_table(stage.position_table_data))
+
             outer.add_row(Group(*stage_parts))
             if i < len(flow.stages) - 1:
                 outer.add_section()
 
         return outer
+
+    def _build_position_inner_table(self, positions: list) -> Table:
+        """根据 positions_data 构建持仓内表（与 print_position_table 中单 symbol 时一致）。"""
+        pos_table = Table(
+            show_header=True, box=box.HORIZONTALS,
+            padding=(0, 1), pad_edge=False, expand=True,
+            header_style="bold", show_edge=False, border_style="dim",
+        )
+        pos_table.add_column("股票", no_wrap=True, style="bold")
+        pos_table.add_column("仓位", justify="right", style="bold")
+        pos_table.add_column("价格", justify="right", style="bold")
+        pos_table.add_column("总价", justify="right", style="bold")
+        pos_table.add_column("占比", justify="right", style="bold")
+        for i, pos in enumerate(positions):
+            sym = pos["symbol"]
+            qty = pos["quantity"]
+            unit = pos.get("unit", "股")
+            cost = pos["avg_cost"]
+            value = pos["position_value"]
+            pct = pos["pct"]
+            sl = pos.get("stop_loss")
+            sl_str = f" 止损=${sl}" if sl else ""
+            pos_table.add_row(
+                sym, f"{qty}{unit}", f"${cost:.3f}", f"${value:,.2f}", f"{pct:.1f}%{sl_str}",
+            )
+            for rec in pos.get("records", []):
+                rec_ts = rec.get("submitted_at", "")
+                if isinstance(rec_ts, str) and len(rec_ts) >= 10:
+                    rec_ts = rec_ts[5:10]
+                side = rec.get("side", "BUY")
+                side_pad = side.ljust(4)[:4]
+                side_rich = (f"[green]{side_pad}[/green]" if side == "BUY" else f"[yellow]{side_pad}[/yellow]")
+                r_qty, r_price = rec.get("qty", 0), rec.get("price", "-")
+                pos_table.add_row(
+                    Text.from_markup(f"[dim]  {rec_ts} {side_rich} {r_qty} @{r_price}[/dim]"),
+                    "", "", "", "",
+                )
+            t_lots = pos.get("t_unmatched_buys") or []
+            if t_lots:
+                uq = pos.get("t_unmatched_qty", 0) or sum(lot.get("remaining_qty", 0) for lot in t_lots)
+                avg = pos.get("t_weighted_avg")
+                if avg is None and uq:
+                    avg = sum(lot.get("price", 0) * lot.get("remaining_qty", 0) for lot in t_lots) / uq
+                avg = avg or 0
+                pos_table.add_row(
+                    Text.from_markup(f"[bold yellow]  [待T][/bold yellow] 共 {int(uq)} 股 均价 ${avg:.2f}"),
+                    "", "", "", "",
+                )
+                for lot in sorted(t_lots, key=lambda x: (x.get("ts") or "", x.get("price", 0))):
+                    ts_str = lot.get("ts") or ""
+                    ts_short = ts_str[5:10] if isinstance(ts_str, str) and len(ts_str) >= 10 else (ts_str or "-")
+                    pos_table.add_row(
+                        Text.from_markup(f"[dim]    {ts_short} ${lot.get('price', 0):.2f} 剩余 {int(lot.get('remaining_qty', 0))}[/dim]"),
+                        "", "", "", "",
+                    )
+            if i < len(positions) - 1:
+                pos_table.add_section()
+        return pos_table
 
 
 # ================================================================
