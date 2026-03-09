@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [2026-03-09] 期权解析支持「$TICKER weekly $STRIKE calls $PRICE」格式
+
+- **parser/option_parser.py**：新增模式 9b，解析「$HOOD weekly $80 calls $1.65」或「HOOD weekly $80 calls $1.65」：HOOD 为股票名，weekly 表示本周内到期（与「本周/这周/this week」一致），并优先于其他模式匹配以避免从 "weekly" 子串误解析出 ticker；相对日期支持增加 `WEEKLY` 与 `weekly` 关键词。
+
+## [2026-03-09] 长桥单合约 SPY 期权当日行情与异常大单查询
+
+- **scripts/query_spy_option_flow.py**：新增脚本，通过长桥 `option_quote` 查询指定 SPY 期权（如 SPY 680C 3/13）当日快照（成交量、最新价、持仓量），并轮询若干次将权利金超过阈值的成交量增量输出为「异常大单」；支持 `--strike`、`--expiry`、`--min-premium`、`--poll-times`、`--poll-interval`。
+- **docs/spy_options_flow.md**：增加「长桥单合约查询」章节与用法说明。
+
 ## [2026-03-05] 订单推送不再追加持仓更新；利润颜色与格式
 
 - **utils/rich_logger.py**：订单终态（Filled）时不再追加「持仓更新」阶段，仅保留订单推送中的交易记录行。交易记录行中卖出利润：去掉前导 `+`，正数绿色、负数红色显示（如 `$123.00` 绿、`$-411.00` 红）。

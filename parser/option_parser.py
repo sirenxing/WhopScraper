@@ -23,7 +23,7 @@ class OptionParser:
         """
         解析相对日期为 m/d 格式（跨平台兼容）
         
-        支持：本周/下周/今天/明天、THIS WEEK/NEXT WEEK/TODAY/TOMORROW
+        支持：本周/下周/今天/明天、THIS WEEK/NEXT WEEK/WEEKLY、TODAY/TOMORROW
         返回：(m/d格式日期, 是否使用了fallback)
         """
         if not date_str:
@@ -33,9 +33,9 @@ class OptionParser:
         now = datetime.now()
         used_fallback = False
         
-        # 相对日期处理
+        # 相对日期处理（weekly = 本周/这周内到期）
         relative_dates = {
-            ("THIS WEEK", "本周", "当周", "这周"): lambda: cls._get_friday_of_week(now),
+            ("THIS WEEK", "WEEKLY", "本周", "当周", "这周"): lambda: cls._get_friday_of_week(now),
             ("NEXT WEEK", "下周"): lambda: cls._get_friday_of_week(now + timedelta(days=7)),
             ("TODAY", "今天"): lambda: now,
             ("TOMORROW", "明天"): lambda: now + timedelta(days=1),
@@ -214,6 +214,17 @@ class OptionParser:
         r'\$?([A-Z]{2,5})\s*[-–]?\s*'
         r'\$?(\d+(?:\.\d+)?)\s+'
         r'(本周|下周|这周|当周|今天|this\s+week|next\s+week)(?:的)?\s*'
+        r'(call|put)s?[\s\S]{0,30}?'
+        r'\$?((?:\d+(?:\.\d+)?|\.\d+)(?:-(?:\d+(?:\.\d+)?|\.\d+))?)',
+        re.IGNORECASE
+    )
+
+    # 模式9b: [$]TICKER weekly $STRIKE calls $PRICE（weekly=本周；(?!weekly) 避免从 "weekly" 子串误匹配出 ticker）
+    # 示例: $HOOD weekly $80 calls $1.65 / HOOD weekly $80 calls $1.65
+    OPEN_PATTERN_9B = re.compile(
+        r'(?:^|\s)\$?(?!weekly)([A-Z]{2,5})\s+'  # 行首或空格后，可选$，(?!weekly) 排除误匹配
+        r'(weekly)\s+'
+        r'\$?(\d+(?:\.\d+)?)\s+'
         r'(call|put)s?[\s\S]{0,30}?'
         r'\$?((?:\d+(?:\.\d+)?|\.\d+)(?:-(?:\d+(?:\.\d+)?|\.\d+))?)',
         re.IGNORECASE
@@ -594,7 +605,7 @@ class OptionParser:
         # 相对日期优先级：下周 > 本周/这周 > 今天/明天
         if re.search(r'下周|next\s*week', text, re.IGNORECASE):
             expiry, _ = cls._resolve_relative_date('下周', message_timestamp)
-        elif re.search(r'本周|这周|当周|this\s*week', text, re.IGNORECASE):
+        elif re.search(r'本周|这周|当周|this\s*week|weekly', text, re.IGNORECASE):
             expiry, _ = cls._resolve_relative_date('本周', message_timestamp)
         elif re.search(r'今天|today', text, re.IGNORECASE):
             expiry, _ = cls._resolve_relative_date('今天', message_timestamp)
@@ -702,7 +713,7 @@ class OptionParser:
             # 标记：消息无时间戳且到期日是从相对日期解析而来（使用了当前时间兜底）
             if not message_timestamp and instruction.expiry:
                 _RELATIVE_DATE_KEYWORDS = {'今天', '明天', 'today', 'tomorrow', '本周', '这周', '当周', '下周',
-                                           'this week', 'next week', 'expiration next week', 'expiration this week'}
+                                           'this week', 'next week', 'weekly', 'expiration next week', 'expiration this week'}
                 msg_lower = message.lower()
                 if any(kw in msg_lower for kw in _RELATIVE_DATE_KEYWORDS):
                     instruction.expiry_fallback_time = True
@@ -727,7 +738,7 @@ class OptionParser:
         if instruction:
             if not message_timestamp and instruction.expiry:
                 _RELATIVE_DATE_KEYWORDS = {'今天', '明天', 'today', 'tomorrow', '本周', '这周', '当周', '下周',
-                                           'this week', 'next week', 'expiration next week', 'expiration this week'}
+                                           'this week', 'next week', 'weekly', 'expiration next week', 'expiration this week'}
                 msg_lower = message.lower()
                 if any(kw in msg_lower for kw in _RELATIVE_DATE_KEYWORDS):
                     instruction.expiry_fallback_time = True
@@ -815,6 +826,32 @@ class OptionParser:
     @classmethod
     def _parse_buy(cls, message: str, message_id: str, message_timestamp: Optional[str] = None) -> Optional[OptionInstruction]:
         """解析买入指令 - 尝试多种模式（按优先级顺序）"""
+        
+        # 优先尝试模式9b: $TICKER weekly $STRIKE calls $PRICE（避免被其他模式从 "weekly" 误匹配出 ticker）
+        match = cls.OPEN_PATTERN_9B.search(message)
+        if match:
+            ticker = match.group(1).upper()
+            expiry_raw = match.group(2)
+            strike = float(match.group(3))
+            option_type_str = match.group(4)
+            price_str = match.group(5)
+            option_type = 'CALL' if option_type_str.upper().startswith('CALL') else 'PUT'
+            price, price_range = cls._parse_price_range(price_str)
+            (expiry, _expiry_fallback) = cls._resolve_relative_date(expiry_raw, message_timestamp)
+            position_match = cls.POSITION_SIZE_PATTERN.search(message)
+            position_size = position_match.group(1) if position_match else None
+            return OptionInstruction(
+                raw_message=message,
+                instruction_type=InstructionType.BUY.value,
+                ticker=ticker,
+                option_type=option_type,
+                strike=strike,
+                expiry=expiry,
+                price=price,
+                price_range=price_range,
+                position_size=position_size,
+                message_id=message_id
+            )
         
         # 优先尝试模式7: 日期在中间格式 (QQQ 11/20 614c 1.1) - 最具体，包含完整信息
         match = cls.OPEN_PATTERN_7.search(message)
