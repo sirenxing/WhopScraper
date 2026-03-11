@@ -21,6 +21,7 @@ from models.record import Record
 from models.stock_instruction import StockInstruction
 from scraper.message_extractor import EnhancedMessageExtractor
 from utils.rich_logger import get_logger
+from utils.broadcast_alert import broadcast_message
 
 logger = logging.getLogger(__name__)
 console = _shared_console
@@ -135,6 +136,10 @@ class MessageMonitor:
             dom_id = getattr(record.message, "group_id", None) or ""
             rlogger.trade_start(dom_id=dom_id)
             record.message.display()
+            # 消息播报：将网页获取的新消息通过语音朗读（受 BROADCAST_MESSAGE_ENABLED 开关控制）
+            content = (record.content or "").strip()
+            if content:
+                broadcast_message(content)
             if record.instruction is not None:
                 record.instruction.display()
             else:
