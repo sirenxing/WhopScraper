@@ -209,10 +209,9 @@ def _export_parsed(messages, path: Path) -> None:
         content = (msg.primary_message or "").strip()
         if not content:
             continue
-        # 提醒类关键词检测：语音播报，不解析为交易指令
+        # 提醒类关键词检测：语音播报提醒，但不跳过解析（消息可能同时包含交易指令）
         if is_broadcast_alert(content):
             broadcast(content)
-            continue
         inst = StockParser.parse(
             content,
             message_id=msg.group_id,
