@@ -17,8 +17,7 @@ BROADCAST_ALERT_KEYWORDS = re.compile(
     re.IGNORECASE
 )
 
-# TTS 引擎（延迟初始化，全局复用）
-_tts_engine = None
+# TTS 锁（保证同一时间只有一个语音在播放）
 _tts_lock = threading.Lock()
 
 
@@ -38,30 +37,6 @@ def is_message_broadcast_enabled() -> bool:
 def is_alert_broadcast_enabled() -> bool:
     """提醒播报开关：是否对包含提醒关键词的消息进行语音播报。"""
     return _env_bool("BROADCAST_ALERT_ENABLED", default=True)
-
-
-def _get_tts_engine():
-    """获取 pyttsx3 TTS 引擎（线程安全，延迟初始化）。"""
-    global _tts_engine
-    if _tts_engine is None:
-        with _tts_lock:
-            if _tts_engine is None:
-                try:
-                    import pyttsx3
-                    _tts_engine = pyttsx3.init()
-                    # 语速：默认 200，适当放慢到 160 更清晰
-                    _tts_engine.setProperty('rate', 160)
-                    # 音量：0.0 ~ 1.0
-                    _tts_engine.setProperty('volume', 1.0)
-                    # 优先使用中文语音（Windows SAPI5 下通常有中文语音包）
-                    voices = _tts_engine.getProperty('voices')
-                    for v in voices:
-                        if 'chinese' in v.name.lower() or 'zh' in v.id.lower():
-                            _tts_engine.setProperty('voice', v.id)
-                            break
-                except Exception as e:
-                    logger.error(f"TTS 引擎初始化失败: {e}")
-    return _tts_engine
 
 
 def is_broadcast_alert(message: str) -> bool:
@@ -107,20 +82,29 @@ def broadcast(message: str) -> None:
 
 
 def _speak_async(text: str) -> None:
-    """在子线程中播报，避免阻塞主流程。"""
+    """在子线程中进行语音播报（非阻塞）。"""
     t = threading.Thread(target=_speak, args=(text,), daemon=True)
     t.start()
 
 
 def _speak(text: str) -> None:
-    """调用 TTS 引擎朗读文本（在子线程执行）。"""
-    try:
-        engine = _get_tts_engine()
-        if engine is None:
-            logger.warning("TTS 引擎不可用，跳过语音播报")
-            return
-        with _tts_lock:
+    """
+    同步语音播报。每次调用新建 pyttsx3 引擎，避免跨线程复用导致静默。
+    """
+    with _tts_lock:
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 160)
+            engine.setProperty('volume', 1.0)
+            # 尝试选择中文语音
+            voices = engine.getProperty('voices')
+            for voice in voices:
+                if 'chinese' in voice.name.lower() or 'zh' in voice.id.lower():
+                    engine.setProperty('voice', voice.id)
+                    break
             engine.say(text)
             engine.runAndWait()
-    except Exception as e:
-        logger.error(f"语音播报失败: {e}")
+            engine.stop()
+        except Exception as e:
+            logger.error(f"TTS 播报失败: {e}")
