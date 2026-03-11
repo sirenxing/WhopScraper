@@ -9,6 +9,7 @@ from models.stock_instruction import StockInstruction
 from parser.stock_parser import StockParser
 from utils.watched_stocks import resolve_position_size_to_shares
 from utils.stock_trade_records import resolve_sell_quantity_from_records
+from utils.broadcast_alert import is_broadcast_alert, broadcast
 
 
 class StockContextResolver:
@@ -23,6 +24,10 @@ class StockContextResolver:
         content = (record.content or "").strip()
         if not content or len(content) < 2:
             return
+
+        # 提醒类关键词检测：语音播报提醒，但不跳过解析（消息可能同时包含交易指令）
+        if is_broadcast_alert(content):
+            broadcast(content)
 
         instruction = StockParser.parse(
             content,
