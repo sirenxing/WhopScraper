@@ -7,14 +7,15 @@
 - **utils/broadcast_alert.py**（新建）：独立语音播报模块，通过 pyttsx3 调用 Windows SAPI5 引擎从扬声器发声，包含两个播报功能：
   - `broadcast_message(message)`：网页新消息播报，受 `BROADCAST_MESSAGE_ENABLED` 开关控制（默认关闭）
   - `broadcast_alert(message)`：提醒类关键词（注意/留意/转弯/拐点）播报，播报内容为「出现关键词，请人工判断」，受 `BROADCAST_ALERT_ENABLED` 开关控制（默认开启）
-  - TTS 引擎延迟初始化、全局复用；播报在子线程执行，不阻塞主流程；自动优先选用中文语音包
-  - 保留 `broadcast()` 作为 `broadcast_alert()` 的兼容别名
+  - 播报在子线程执行，不阻塞主流程；同一时间仅允许一个语音播放
+  - 为修复“首次能播报、后续静默”的问题，TTS 改为**每次播报新建一次引擎并在结束后释放**，不再跨线程复用全局引擎
+  - 自动优先选用中文语音包；保留 `broadcast()` 作为 `broadcast_alert()` 的兼容别名
 
 - **parser/stock_parser.py**：
   - 新增 `STOCK_NAME_ALIASES`：主流中文股票名到 ticker 映射（台积电→TSM、特斯拉→TSLA、英伟达→NVDA 等约 50 条，覆盖科技、金融、消费、医药、能源、中概等板块）
   - 新增 `_alias_tickers_in_message()`：从消息中匹配中文股票名并返回对应 ticker，按名称长度降序匹配优先避免误命中
   - `parse()` 末尾增加中文名映射兜底：watched ticker fallback → 中文名映射 fallback
-  - 消息清洗规则：在解析前用正则移除「转弯时候出」/「转弯的时候出」等干扰短语，避免含「转弯」的提醒类语句被误识别为卖出指令
+  - 消息清洗规则：在解析前用正则移除「转弯时候出」/「转弯的时候出」等干扰短语，避免含「转弯」的提醒类语句被误识别为卖出指令；清洗后其余有效买入内容仍可继续解析
 
 - **.env.example**：新增两个语音播报开关说明：
   - `BROADCAST_MESSAGE_ENABLED=false`：是否对每条网页新消息语音朗读
@@ -22,14 +23,17 @@
 
 ### 修改
 
-- **parser/stock_context_resolver.py**：调用 `StockParser.parse()` 前先执行 `is_broadcast_alert()` 检测，命中提醒关键词则调用 `broadcast_alert()` 并跳过解析，不下单
-- **scripts/capture_stock_messages.py**：同 `stock_context_resolver`，在解析前拦截提醒类消息并播报
+- **parser/stock_context_resolver.py**：调用 `StockParser.parse()` 前先执行 `is_broadcast_alert()` 检测；命中提醒关键词时先调用 `broadcast_alert()`，**但不再跳过解析**，避免“消息里既有提醒词又有真实买点”时漏掉买入指令
+- **scripts/capture_stock_messages.py**：同 `stock_context_resolver`，提醒类消息先播报，再继续进入解析流程
 - **scraper/monitor.py**：每条新消息展示后调用 `broadcast_message()`，受 `BROADCAST_MESSAGE_ENABLED` 开关控制
+- **.env.example**：补充两个语音播报开关说明，支持分别控制“网页消息播报”和“提醒类消息播报”
 
 ### 问题修复
 
 - 修复「tsll今天开盘直线 突破了15.05之前的阻力 可以注意之前15.05那部分做T部分 有转弯时候出」被误解析为 `[卖出] TSLL @ $15.05` 的问题：清洗掉「转弯时候出」后，剩余文本不再命中卖出正则，返回 `None` 并触发语音播报提醒
 - 修复「351.7开了台积电常规仓的一半」无法解析的问题：通过中文名映射「台积电→TSM」后走 watched ticker fallback，正确解析为 `[买入] TSM @ $351.7 常规仓的一半`
+- 修复「14.5加了tsll常规仓的一半，转弯时候出」这类消息此前会“播报后直接中断解析”的问题：现改为**先播报，再清洗提醒尾句，最后继续解析剩余买入内容**，可正确得到 `[买入] TSLL @ $14.5 常规仓的一半`
+- 修复 pyttsx3 在当前实现下仅第一次真正发声、后续只有日志和 `print` 提示但电脑不再出声的问题：改为每次播报单独初始化 TTS 引擎，验证可连续多次正常发声
 
 ## [2026-03-09] 期权解析支持「$TICKER weekly $STRIKE calls $PRICE」格式
 
