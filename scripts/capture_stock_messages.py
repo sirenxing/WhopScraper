@@ -33,6 +33,7 @@ from scraper.browser import BrowserManager
 from scraper.message_extractor import EnhancedMessageExtractor
 from parser.stock_parser import StockParser
 from utils.watched_stocks import get_watched_tickers
+from utils.broadcast_alert import is_broadcast_alert, broadcast
 
 
 # 默认输出路径（不再从 env 读取，可通过脚本入参 --origin / --parsed / --export-html 覆盖）
@@ -207,6 +208,10 @@ def _export_parsed(messages, path: Path) -> None:
     for msg in messages:
         content = (msg.primary_message or "").strip()
         if not content:
+            continue
+        # 提醒类关键词检测：语音播报，不解析为交易指令
+        if is_broadcast_alert(content):
+            broadcast(content)
             continue
         inst = StockParser.parse(
             content,
