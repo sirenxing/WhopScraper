@@ -1,5 +1,36 @@
 # CHANGELOG
 
+## [2026-03-12] 语音播报模块 + 中文股票名映射 + 消息清洗规则
+
+### 新增
+
+- **utils/broadcast_alert.py**（新建）：独立语音播报模块，通过 pyttsx3 调用 Windows SAPI5 引擎从扬声器发声，包含两个播报功能：
+  - `broadcast_message(message)`：网页新消息播报，受 `BROADCAST_MESSAGE_ENABLED` 开关控制（默认关闭）
+  - `broadcast_alert(message)`：提醒类关键词（注意/留意/转弯/拐点）播报，播报内容为「出现关键词，请人工判断」，受 `BROADCAST_ALERT_ENABLED` 开关控制（默认开启）
+  - TTS 引擎延迟初始化、全局复用；播报在子线程执行，不阻塞主流程；自动优先选用中文语音包
+  - 保留 `broadcast()` 作为 `broadcast_alert()` 的兼容别名
+
+- **parser/stock_parser.py**：
+  - 新增 `STOCK_NAME_ALIASES`：主流中文股票名到 ticker 映射（台积电→TSM、特斯拉→TSLA、英伟达→NVDA 等约 50 条，覆盖科技、金融、消费、医药、能源、中概等板块）
+  - 新增 `_alias_tickers_in_message()`：从消息中匹配中文股票名并返回对应 ticker，按名称长度降序匹配优先避免误命中
+  - `parse()` 末尾增加中文名映射兜底：watched ticker fallback → 中文名映射 fallback
+  - 消息清洗规则：在解析前用正则移除「转弯时候出」/「转弯的时候出」等干扰短语，避免含「转弯」的提醒类语句被误识别为卖出指令
+
+- **.env.example**：新增两个语音播报开关说明：
+  - `BROADCAST_MESSAGE_ENABLED=false`：是否对每条网页新消息语音朗读
+  - `BROADCAST_ALERT_ENABLED=true`：是否对提醒型关键词消息语音播报
+
+### 修改
+
+- **parser/stock_context_resolver.py**：调用 `StockParser.parse()` 前先执行 `is_broadcast_alert()` 检测，命中提醒关键词则调用 `broadcast_alert()` 并跳过解析，不下单
+- **scripts/capture_stock_messages.py**：同 `stock_context_resolver`，在解析前拦截提醒类消息并播报
+- **scraper/monitor.py**：每条新消息展示后调用 `broadcast_message()`，受 `BROADCAST_MESSAGE_ENABLED` 开关控制
+
+### 问题修复
+
+- 修复「tsll今天开盘直线 突破了15.05之前的阻力 可以注意之前15.05那部分做T部分 有转弯时候出」被误解析为 `[卖出] TSLL @ $15.05` 的问题：清洗掉「转弯时候出」后，剩余文本不再命中卖出正则，返回 `None` 并触发语音播报提醒
+- 修复「351.7开了台积电常规仓的一半」无法解析的问题：通过中文名映射「台积电→TSM」后走 watched ticker fallback，正确解析为 `[买入] TSM @ $351.7 常规仓的一半`
+
 ## [2026-03-09] 期权解析支持「$TICKER weekly $STRIKE calls $PRICE」格式
 
 - **parser/option_parser.py**：新增模式 9b，解析「$HOOD weekly $80 calls $1.65」或「HOOD weekly $80 calls $1.65」：HOOD 为股票名，weekly 表示本周内到期（与「本周/这周/this week」一致），并优先于其他模式匹配以避免从 "weekly" 子串误解析出 ticker；相对日期支持增加 `WEEKLY` 与 `weekly` 关键词。
@@ -99,10 +130,12 @@
 ## [2026-03-03] 股票解析：扩展关注列表 + 增强正则（全量 479→543/775，+64）
 
 ### 关注列表扩展
+
 - `data/watched_stocks.json` 新增 BMNR、OKLO、IREN、HOOD、RKLB、NVDL 六只关注股票
 - 使 fallback 解析机制（watched tickers → hint patterns）对这些股票生效
 
 ### 修复 SELL 模式
+
 - **SELL_SHORT_TERM**：允许"附近"出现在"出短线"前（"95.1附近出短线"）
 - **SELL_APPROX_SIMPLE**：支持"成本附近先出""附近都出""附近卖出"变体
 - **SELL_TICKER_OUT_PRICE_PART**：`出\s*` → `出[\s\S]{0,20}?` 允许间隔（"出昨天收盘买的30.4部分"）
@@ -110,27 +143,31 @@
 - **新增 SELL_PRICE_OUT_GAP_TICKER_SUFFIX**：price + 出 + gap + ticker（"43.1出夜盘补的iren那部分"、"75.1出日内买的rklb"）
 
 ### 修复 BUY 模式
+
 - **BUY_PATTERN_4**：动作词新增"介入""(做点)配置""在?接"
 - **SELL_HINT_SINGLE_OUT**：支持"成本""都/也/先""卖出"前缀
 
 ### 增强 fallback hint
+
 - **BUY_HINT_SINGLE**：gap 扩至 20 字符，新增"介入""配置""开(?!盘)""接(?!下)"
 - **BUY_HINT_RANGE**：新增"介入""配置"
 - **SELL_HINT_SINGLE_OUT**：支持"成本附近""都/也/先出""卖出"
 
 ### 解析率变化
-| 股票 | 修改前 | 修改后 | 变化 |
-|------|--------|--------|------|
-| TSLL | 209/282 (74.1%) | 209/282 (74.1%) | +0 |
-| NVDL | 88/129 (68.2%) | 101/129 (78.3%) | +13 |
-| BMNR | 79/151 (52.3%) | 103/151 (68.2%) | +24 |
-| OKLO | 34/58 (58.6%) | 39/58 (67.2%) | +5 |
-| IREN | 25/51 (49.0%) | 31/51 (60.8%) | +6 |
-| HOOD | 19/44 (43.2%) | 22/44 (50.0%) | +3 |
-| RKLB | 25/60 (41.7%) | 38/60 (63.3%) | +13 |
-| **总计** | **479/775** | **543/775 (70.1%)** | **+64** |
+
+| 股票     | 修改前          | 修改后              | 变化    |
+| -------- | --------------- | ------------------- | ------- |
+| TSLL     | 209/282 (74.1%) | 209/282 (74.1%)     | +0      |
+| NVDL     | 88/129 (68.2%)  | 101/129 (78.3%)     | +13     |
+| BMNR     | 79/151 (52.3%)  | 103/151 (68.2%)     | +24     |
+| OKLO     | 34/58 (58.6%)   | 39/58 (67.2%)       | +5      |
+| IREN     | 25/51 (49.0%)   | 31/51 (60.8%)       | +6      |
+| HOOD     | 19/44 (43.2%)   | 22/44 (50.0%)       | +3      |
+| RKLB     | 25/60 (41.7%)   | 38/60 (63.3%)       | +13     |
+| **总计** | **479/775**     | **543/775 (70.1%)** | **+64** |
 
 ### 剩余未解析消息分析 (232条)
+
 - 53% 非交易消息（分析/评论/无明确操作）
 - 27% 多股推荐消息（4+个ticker，结构复杂）
 - 20% 条件性/复杂结构操作（"如果...""等...再..."等）
@@ -140,6 +177,7 @@
 基于 `check_TSLL_message.json`（123 条失败）和 `check_NVDL_message.json`（76 条失败）逐条分析，批量补全正则。
 
 ### 修复现有 pattern
+
 - **BUY_PATTERN_4**：`\s+` → `\s*`，`(?:在|可以)` 改可选，允许 `[\s\S]{0,10}?` 间隔，补充"建小仓位底仓"等变体
 - **BUY_PATTERN_5**：允许 price 与"加了"间有中文间隔，加 `加(?!仓)` 排除误匹配
 - **BUY_RANGE_BUILD**：新增"加仓""开仓""加一半""分批进/加"
@@ -150,6 +188,7 @@
 - **SELL_PRICE_OUT_REF_SUFFIX**：允许"附近"在"出"前，支持"再次出""那部分""低吸的"
 
 ### 新增 prefix pattern（ticker 在句首）
+
 - **SELL_TICKER_OUT_PRICE_PART**：ticker + 出 + price + 那部分（"nvdl…出84.5那部分"）
 - **SELL_TICKER_CAN_PRICE_OUT**：ticker + 可以 + price + 出（"nvdl可以86.75 出"）
 - **SELL_HALF_AT_PRICE**：ticker + 一半 + 在 + price + 出（"nvdl之前剩下的一半在107.5出"）
@@ -157,6 +196,7 @@
 - **BUY_TICKER_ACTION_RANGE**：ticker + 吸/加/接 + range（"nvdl…吸 83-83.5"）
 
 ### 新增 suffix pattern（ticker 在句尾/句中）
+
 - **SELL_SINGLE_REDUCE_SUFFIX**：单价 + 减/减仓 + ticker
 - **SELL_REDUCE_HALF_REF_SUFFIX**：单价 + 减一半 + 参考价 + ticker
 - **SELL_OUT_HALF_NO_REF_SUFFIX**：单价 + 出一半 + ticker（无 ref）
@@ -169,6 +209,7 @@
 - **BUY_OPEN_POSITION_TICKER_SUFFIX**：价格 + 开仓了 + 仓位 + ticker
 
 ### 增强 fallback hint（关注列表匹配后）
+
 - **SELL_HINT_REDUCE**：新增，匹配 price + 减
 - **SELL_HINT_SINGLE_OUT**：放宽，允许"先出""可以出"
 - **BUY_HINT_SINGLE**：扩展动作词，加负向断言排除误匹配
@@ -177,7 +218,7 @@
 ## [2026-03-02] 股票解析：关注列表先匹配再解析价格/数量
 
 - **`StockParser` 关注列表 fallback**：当正则未解析出 ticker 时，用 `data/watched_stocks.json` 中的关注股票在消息中做**整词匹配**；命中后再用仅含价格/操作/数量的正则解析买卖与数量。
-- 新增 `_watched_tickers_in_message(message)`、`_parse_with_watched_ticker(message, message_id, ticker)` 及一组 SELL_HINT_* / BUY_HINT_* 正则（不依赖 ticker 在句中的位置），用于 fallback 解析。
+- 新增 `_watched_tickers_in_message(message)`、`_parse_with_watched_ticker(message, message_id, ticker)` 及一组 SELL*HINT*_ / BUY*HINT*_ 正则（不依赖 ticker 在句中的位置），用于 fallback 解析。
 - 解析顺序不变：先按原有规则解析，全部失败后再尝试「关注列表命中 + 价格/数量正则」。
 - **整词边界**：关注列表匹配使用 `(?:^|[^a-zA-Z])ticker(?:$|[^a-zA-Z])`，避免中文后接 ticker（如「一半tsll」）因 `\b` 与 Unicode 行为导致匹配不到。
 - **移除**：句尾 ticker 专用逻辑（SELL_RANGE_CAN_OUT_SUFFIX 及对应处理），改由上述 fallback 统一覆盖。
@@ -234,8 +275,8 @@
 trade_start
 ```
 
-- `**RichLogger` 交易流程**：从文本行拼接改为表格渲染，`log()` 不再自动路由到交易流程，改由调用方显式使用 `trade_stage()` 添加表格行
-- `**MessageGroup.display()`**：改用 `trade_stage("原始消息")` 输出结构化数据，时间戳和消息延迟显示在标题行右列，domID/内容/配置作为数据行
+- `**RichLogger` 交易流程\*\*：从文本行拼接改为表格渲染，`log()` 不再自动路由到交易流程，改由调用方显式使用 `trade_stage()` 添加表格行
+- `**MessageGroup.display()`\*\*：改用 `trade_stage("原始消息")` 输出结构化数据，时间戳和消息延迟显示在标题行右列，domID/内容/配置作为数据行
 - `**OptionInstruction.display()` / `StockInstruction.display()**`：改用 `trade_stage("解析消息", rows=[...])`，字段以键值对呈现
 - `**OperationInstruction.display_parse_failed()**`：改用 `trade_stage()` 输出
 - `**print_order_validation_display` / `print_sell/modify/close_validation_display**`：改用 `trade_stage("订单校验", rows=[...])`，通过 `_parse_detail_rows()` 解析详情行为表格键值行
@@ -254,7 +295,7 @@ trade_start
   - **静态 Tag 区块**（`log_config / log_nested`）：配置更新、长桥数据等带嵌套结构的一次性输出
   - **线程安全**：所有公开方法通过 `RLock` 保护，push 回调线程可安全调用
   - **Singleton**：`get_logger() / set_logger() / reset_logger()` 管理全局单例
-- `**test/test_rich_logger.py`**：单元测试，覆盖 Tag Live、交易流程、静态 Tag、Singleton、多线程安全和完整交易管道集成测试
+- `**test/test_rich_logger.py`\*\*：单元测试，覆盖 Tag Live、交易流程、静态 Tag、Singleton、多线程安全和完整交易管道集成测试
 
 ### 重构
 
@@ -279,11 +320,14 @@ trade_start
   - 卖出：按 `sell_quantity` 标注（`1/2`、`一半` 等）计算股数 → 打印 `[订单校验]` → 调用 `broker.submit_stock_order()`
 - **T交易分析脚本**：`scripts/analysis/t_trade_analysis.py`，分析单一股票买卖记录中哪些买入批次尚未被 T 出，支持 FIFO 匹配 + 超额卖出缓冲逆向对消，输出待 T 批次（含价格、股数、已 T 进度）及累计利润。
   **使用方式：**
+
   ```bash
   python3 scripts/analysis/t_trade_analysis.py TSLL
   python3 scripts/analysis/t_trade_analysis.py TSLL --file data/stock_trade_records.json
   ```
+
   **输出示例（TSLL）：**
+
   ```
   ═══════════════════════════════════════════════════════
     TSLL.US T 交易分析   共 65 条成交记录
@@ -315,9 +359,11 @@ trade_start
     已 T 出：           10999 股  累计利润 $4,002.44
   ──────────────────────────────────────────────────────────
   ```
+
   **匹配规则：**
   1. 卖出 B2 股 @ A2 时，FIFO 匹配之前买入价 < A2 的批次，匹配股数标记为"T完成"
   2. 卖出量超过所有可匹配买入量时，超额卖出记入缓冲；后续出现买入价更低的记录时逆向对消
+
 - **启动 `[仓位分析]` 展示**：正股页启动同步后自动输出 `[仓位分析]` 模块，逐个股票展示待 T 仓位（买入时间、价格、剩余股数）及已 T 利润；无需手动执行分析脚本。
 
 ### 优化
@@ -395,7 +441,7 @@ trade_start
 ### 修复
 
 - **移除“开头 X”时保留 ticker XOM**（多处）
-  - **原因**：为过滤头像 fallback “X”，曾用 `^[XxＸｘ]+\s`* 或 `^X\s*` 去掉开头 X，导致 “XOM - ...” 被清成 “OM - ...”，解析得到 ticker=OM。
+  - **原因**：为过滤头像 fallback “X”，曾用 `^[XxＸｘ]+\s`_ 或 `^X\s_` 去掉开头 X，导致 “XOM - ...” 被清成 “OM - ...”，解析得到 ticker=OM。
   - **修改**：仅在“开头是单独 X（后接非字母或结尾）”时移除，即用 `^[XxＸｘ]+\s*(?=[^A-Za-z]|$)`（Python）或 `^X\s*(?=[^A-Za-z]|$)`（JS），保留 “XOM” 等以 X 开头的 ticker。
   - **涉及文件**：`models/record.py`（`_clean_content`，主流程）、`scraper/quote_matcher.py`（`clean_quote_text`）、`scraper/message_extractor.py`（两处引用清理）、`test/analyze_local_messages.py`。
 
@@ -503,7 +549,7 @@ trade_start
   - **信息完整率**: 58.7% → **76.89%** (+18.19%)
   - **生成 symbol**: 0 → **172条**
   - **不完整消息**: 32 → **1条**
-  **实施的优化**:
+    **实施的优化**:
   1. 新增 `OPEN_PATTERN_7`: 支持日期在中间格式（`QQQ 11/20 614c 1.1`）并优先于其他模式
   2. 优化 `OPEN_PATTERN_1`: 添加"的"字和"到期"支持（`下周的`、`下周到期`）
   3. 新增 `OPEN_PATTERN_8`: 支持中文"看涨期权"/"看跌期权"
@@ -772,19 +818,19 @@ result = trader.execute_instruction(instruction)
 
 - 新增 `REVERSE_STOP_LOSS_PATTERN` 正则
 - `_parse_modify`: 添加反向止损匹配逻辑
-- 增强ticker提取：支持"(?:剩下)?的\s*([A-Za-z]{2,5})"格式
+- 增强ticker提取：支持"(?:剩下)?的\s\*([A-Za-z]{2,5})"格式
 
 ### 💡 问题场景
 
 **问题**: "2.5止损剩下的ba 横盘有磨损了" 解析失败
 
-**原因**: 
+**原因**:
 
 1. 原有正则要求"止损在前，价格在后"（止损 2.5）
 2. 实际消息是"价格在前，止损在后"（2.5止损）
 3. ticker是小写且在中文"的"之后，未被识别
 
-**解决**: 
+**解决**:
 
 1. 新增反向止损正则: `r'(\d+(?:\.\d+)?)\s*(?:止损|SL)'`
 2. 增强ticker提取: `r'(?:剩下)?的\s*([A-Za-z]{2,5})(?:\s|$)'`
@@ -820,18 +866,23 @@ result = trader.execute_instruction(instruction)
 **止损指令现在支持**:
 
 1. **正向格式**（原有）:
-  - 止损 2.5
-  - 止损在2.9
-  - SL 1.5
-  - 止损设置在0.17
+
+- 止损 2.5
+- 止损在2.9
+- SL 1.5
+- 止损设置在0.17
+
 2. **反向格式**（新增）:
-  - 2.5止损
-  - 3.0止损剩下的ba
-  - 1.8SL
-  - 2.2SL剩下的tsla
+
+- 2.5止损
+- 3.0止损剩下的ba
+- 1.8SL
+- 2.2SL剩下的tsla
+
 3. **调整止损**（原有）:
-  - 止损提高到3.2
-  - 止损上移到2.25
+
+- 止损提高到3.2
+- 止损上移到2.25
 
 ### 📝 技术细节
 
@@ -870,13 +921,13 @@ result = trader.execute_instruction(instruction)
 
 **问题**: 消息"止损提高到3.2 tsla期权今天也是日内的"被错误补全为BA
 
-**原因**: 
+**原因**:
 
 1. 解析器没有提取到"tsla"作为ticker
 2. 系统认为无ticker，使用保守策略
 3. 从前5条找到最近的BUY（BA），错误补全
 
-**解决**: 
+**解决**:
 
 1. 提取消息中的"tsla"为ticker
 2. 使用积极策略查找TSLA的买入信息
@@ -930,13 +981,18 @@ result = trader.execute_instruction(instruction)
 ### 🔧 修改文件
 
 1. **parser/message_context_resolver.py**
-  - `_find_context_conservative`: 新增前5条消息查找
-  - `_search_in_recent_messages`: 支持 `ticker=None` 参数
+
+- `_find_context_conservative`: 新增前5条消息查找
+- `_search_in_recent_messages`: 支持 `ticker=None` 参数
+
 2. **analyze_local_messages.py**
-  - 新增 `generate_option_symbol()` 函数
-  - 输出显示完整期权代码
+
+- 新增 `generate_option_symbol()` 函数
+- 输出显示完整期权代码
+
 3. **docs/order_management.md**
-  - 更新保守策略说明
+
+- 更新保守策略说明
 
 ### 💡 使用示例
 
@@ -985,28 +1041,36 @@ result = trader.execute_instruction(instruction)
 ### 📦 新增文件
 
 1. **parser/message_context_resolver.py**
-  - `MessageContextResolver` 类：核心上下文解析器
-  - 支持智能上下文查找和补全
-  - 支持宽松匹配（ticker不匹配时的fallback）
+
+- `MessageContextResolver` 类：核心上下文解析器
+- 支持智能上下文查找和补全
+- 支持宽松匹配（ticker不匹配时的fallback）
+
 2. **test_context_resolver.py**
-  - 完整的测试套件
-  - 5个测试用例覆盖主要场景
-  - 验证补全准确性
+
+- 完整的测试套件
+- 5个测试用例覆盖主要场景
+- 验证补全准确性
 
 ### 🔧 修改文件
 
 1. **analyze_local_messages.py**
-  - 集成 `MessageContextResolver`
-  - 增强输出展示，显示上下文来源和补全信息
-  - 添加上下文使用统计
+
+- 集成 `MessageContextResolver`
+- 增强输出展示，显示上下文来源和补全信息
+- 添加上下文使用统计
+
 2. **parser/option_parser.py**
-  - 修复 `OPEN_PATTERN_1` 正则：支持相对日期（本周、下周）单独作为到期日
-  - 增强 `TAKE_PROFIT_PATTERN_1`：支持提取可选的股票代码
-  - 所有搜索方法支持 `message_timestamp` 参数
+
+- 修复 `OPEN_PATTERN_1` 正则：支持相对日期（本周、下周）单独作为到期日
+- 增强 `TAKE_PROFIT_PATTERN_1`：支持提取可选的股票代码
+- 所有搜索方法支持 `message_timestamp` 参数
+
 3. **docs/order_management.md**
-  - 新增"消息上下文自动补全"章节
-  - 详细说明补全触发条件、查找策略、使用示例
-  - 添加技术实现和注意事项说明
+
+- 新增"消息上下文自动补全"章节
+- 详细说明补全触发条件、查找策略、使用示例
+- 添加技术实现和注意事项说明
 
 ### 🎨 功能特性
 
@@ -1100,17 +1164,22 @@ result = trader.execute_instruction(instruction)
 ### 🗑️ 删除的废弃代码
 
 1. **删除 MessageGroup.to_dict()**
-  - 旧格式包含过多内部字段
-  - 统一使用 `to_simple_dict()`
+
+- 旧格式包含过多内部字段
+- 统一使用 `to_simple_dict()`
+
 2. **删除 scraper/message_grouper.py**
-  - 849 行代码
-  - 交易组分组逻辑
-  - `MessageGrouper`, `TradeMessageGroup` 类
-  - `format_as_table`, `format_as_detailed_table` 函数
+
+- 849 行代码
+- 交易组分组逻辑
+- `MessageGrouper`, `TradeMessageGroup` 类
+- `format_as_table`, `format_as_detailed_table` 函数
+
 3. **简化 extract_with_context()**
-  - 移除冗余字段（author, primary_message, related_messages 等）
-  - 直接使用 `to_simple_dict()` 构建输出
-  - 保留作为 MessageMonitor 的兼容层
+
+- 移除冗余字段（author, primary_message, related_messages 等）
+- 直接使用 `to_simple_dict()` 构建输出
+- 保留作为 MessageMonitor 的兼容层
 
 ### 📝 更新的文件
 
@@ -1179,22 +1248,27 @@ for group in raw_groups:
 
 已从 `main.py` 中删除以下旧的测试函数：
 
-1. `**test_parser()`** - 解析器测试
-  - 功能已被 `python3 main.py --test whop-scraper` 替代
-  - 可直接查看实际抓取结果中的解析效果
+1. `**test_parser()`\*\* - 解析器测试
+
+- 功能已被 `python3 main.py --test whop-scraper` 替代
+- 可直接查看实际抓取结果中的解析效果
+
 2. `**analyze_local_html()**` - 本地HTML分析
-  - 功能已被独立脚本 `analyze_local_messages.py` 替代
-  - 新脚本功能更强大，支持JSON导出
+
+- 功能已被独立脚本 `analyze_local_messages.py` 替代
+- 新脚本功能更强大，支持JSON导出
+
 3. `**test_message_extractor()**` - 消息提取器测试
-  - 功能已被 `python3 main.py --test whop-scraper` 整合
-  - 使用相同的 `EnhancedMessageExtractor`
+
+- 功能已被 `python3 main.py --test whop-scraper` 整合
+- 使用相同的 `EnhancedMessageExtractor`
 
 #### 更新的命令行参数
 
 **删除的测试选项**：
 
 - ❌ `--test parser`
-- ❌ `--test analyze-html`  
+- ❌ `--test analyze-html`
 - ❌ `--test message-extractor`
 
 **保留的测试选项**：
@@ -1211,7 +1285,7 @@ for group in raw_groups:
 # 新: 使用独立脚本，功能更强大
 python3 analyze_local_messages.py debug/page_xxx.html
 
-# 原: python3 main.py --test parser  
+# 原: python3 main.py --test parser
 # 新: 在 whop-scraper 测试中查看解析结果
 python3 main.py --test whop-scraper
 
@@ -1329,12 +1403,16 @@ $ python3 main.py --test whop-scraper
 
 ```javascript
 // 修复前：选中第一个 span（作者名）
-const quoteTextSpan = quoteEl.querySelector('[class*="fui-Text"][class*="truncate"]');
+const quoteTextSpan = quoteEl.querySelector(
+  '[class*="fui-Text"][class*="truncate"]',
+);
 
 // 修复后：过滤掉包含 fui-r-weight-medium 的 span
-const quoteSpans = quoteEl.querySelectorAll('[class*="fui-Text"][class*="truncate"][class*="fui-r-size-1"]');
-const contentSpans = Array.from(quoteSpans).filter(span => 
-    !span.className.includes('fui-r-weight-medium')
+const quoteSpans = quoteEl.querySelectorAll(
+  '[class*="fui-Text"][class*="truncate"][class*="fui-r-size-1"]',
+);
+const contentSpans = Array.from(quoteSpans).filter(
+  (span) => !span.className.includes("fui-r-weight-medium"),
 );
 ```
 
@@ -1343,8 +1421,14 @@ const contentSpans = Array.from(quoteSpans).filter(span =>
 ```html
 <div class="peer/reply ...">
   <div class="flex items-center gap-1.5 truncate">
-    <span class="fui-Text truncate fui-r-size-1 fui-r-weight-medium">xiaozhaolucky</span>  <!-- 作者名 -->
-    <span class="fui-Text truncate fui-r-size-1">INTC - $52 CALLS 1月30 1.25 ...</span>  <!-- 引用内容 -->
+    <span class="fui-Text truncate fui-r-size-1 fui-r-weight-medium"
+      >xiaozhaolucky</span
+    >
+    <!-- 作者名 -->
+    <span class="fui-Text truncate fui-r-size-1"
+      >INTC - $52 CALLS 1月30 1.25 ...</span
+    >
+    <!-- 引用内容 -->
   </div>
 </div>
 ```
@@ -1365,37 +1449,42 @@ const contentSpans = Array.from(quoteSpans).filter(span =>
 **修复方案**：
 
 1. 修改 `getGroupHistory` 函数，在遍历历史消息时：
-  - 找到消息组的第一条消息（`data-has-message-above="false"`）
-  - 从第一条消息中提取引用信息
-  - 返回 `{history, quoted_context}`
+
+- 找到消息组的第一条消息（`data-has-message-above="false"`）
+- 从第一条消息中提取引用信息
+- 返回 `{history, quoted_context}`
+
 2. 在提取消息时：
-  - 如果消息有上级消息（`has_message_above=true`）
-  - 从消息组中获取引用，让非首条消息继承这个引用
+
+- 如果消息有上级消息（`has_message_above=true`）
+- 从消息组中获取引用，让非首条消息继承这个引用
 
 ```javascript
 // 修改后的 getGroupHistory 返回引用信息
 const getGroupHistory = (currentMsgEl) => {
-    const history = [];
-    let groupQuotedContext = '';
-    // ... 遍历找到第一条消息
-    if (firstMsgEl) {
-        // 从第一条消息提取引用
-        const quoteEl = firstMsgEl.querySelector('.peer\\\\/reply, [class*="peer/reply"]');
-        // ... 提取逻辑
-    }
-    return {
-        history: history,
-        quoted_context: groupQuotedContext
-    };
+  const history = [];
+  let groupQuotedContext = "";
+  // ... 遍历找到第一条消息
+  if (firstMsgEl) {
+    // 从第一条消息提取引用
+    const quoteEl = firstMsgEl.querySelector(
+      '.peer\\\\/reply, [class*="peer/reply"]',
+    );
+    // ... 提取逻辑
+  }
+  return {
+    history: history,
+    quoted_context: groupQuotedContext,
+  };
 };
 
 // 让非首条消息继承引用
 if (group.has_message_above) {
-    const groupInfo = getGroupHistory(msgEl);
-    group.history = groupInfo.history;
-    if (groupInfo.quoted_context && !group.quoted_context) {
-        group.quoted_context = groupInfo.quoted_context;
-    }
+  const groupInfo = getGroupHistory(msgEl);
+  group.history = groupInfo.history;
+  if (groupInfo.quoted_context && !group.quoted_context) {
+    group.quoted_context = groupInfo.quoted_context;
+  }
 }
 ```
 
@@ -1475,11 +1564,7 @@ if (group.has_message_above) {
       "timestamp": "Jan 21, 2026 10:51 PM",
       "refer": null,
       "position": "last",
-      "history": [
-        "SPY - $680 CALLS 今天 $2.3",
-        "小仓位 止损在1.8",
-        "2.6出一半"
-      ]
+      "history": ["SPY - $680 CALLS 今天 $2.3", "小仓位 止损在1.8", "2.6出一半"]
     }
   ]
 }
@@ -1535,7 +1620,7 @@ python3 analyze_local_messages.py debug/page_20260202_000748.html --no-json
 ```javascript
 // ❌ 原代码
 if (hasAttachment) {
-    const hasNoContent = !group.primary_message || 
+    const hasNoContent = !group.primary_message ||
                         group.primary_message.length < 10;  // ← 问题：<10字符就认为无内容
     if (... || (hasNoContent && group.related_messages.length === 0)) {
         return '纯图片消息';  // 导致短消息被误判
@@ -1553,14 +1638,17 @@ if (hasAttachment) {
 ```javascript
 // ✅ 修复后
 if (hasAttachment) {
-    const isOnlyReadCount = group.primary_message && 
-                           /^(由\s*)?\d+\s*阅读$/.test(group.primary_message);
-    // 只有当真的没有内容，或者只有阅读量时才跳过
-    const hasNoContent = !group.primary_message || 
-                        group.primary_message.trim().length === 0;
-    if (isOnlyReadCount || (hasNoContent && group.related_messages.length === 0)) {
-        return '纯图片消息';
-    }
+  const isOnlyReadCount =
+    group.primary_message && /^(由\s*)?\d+\s*阅读$/.test(group.primary_message);
+  // 只有当真的没有内容，或者只有阅读量时才跳过
+  const hasNoContent =
+    !group.primary_message || group.primary_message.trim().length === 0;
+  if (
+    isOnlyReadCount ||
+    (hasNoContent && group.related_messages.length === 0)
+  ) {
+    return "纯图片消息";
+  }
 }
 ```
 
@@ -1622,7 +1710,7 @@ if (hasAttachment) {
   1. first:  "1.65附近 46 cal"
   2. middle: "都出"           ← 被过滤
   3. last:   "1.65附近 46 call 剩余都出了"
-  
+
 实际 history:  ["1.65附近 46 cal"]           ❌ 缺少 "都出"
 期望 history:  ["1.65附近 46 cal", "都出"]  ✅
 ```
@@ -1693,18 +1781,23 @@ if (text && text.length >= 2 && ...) {  // ✅ 保留2字符消息
 
 #### 更新文件
 
-1. `**docs/dom_structure_guide.md`**
-  - 在"关键属性"章节添加 `data-message-id` 稳定性说明
-  - 补充ID格式和应用场景
+1. `**docs/dom_structure_guide.md`\*\*
+
+- 在"关键属性"章节添加 `data-message-id` 稳定性说明
+- 补充ID格式和应用场景
+
 2. `**docs/message_output_format.md**`
-  - 在 `domID` 字段说明中强调稳定性
-  - 列举具体应用场景：
-    - 消息去重（避免重复处理）
-    - 历史记录追踪（跨会话识别）
-    - 增量更新（只处理新消息）
-    - 消息引用匹配
+
+- 在 `domID` 字段说明中强调稳定性
+- 列举具体应用场景：
+  - 消息去重（避免重复处理）
+  - 历史记录追踪（跨会话识别）
+  - 增量更新（只处理新消息）
+  - 消息引用匹配
+
 3. `**docs/analyze_local_messages_guide.md**`
-  - 在字段说明表格中标注 `domID` 稳定性
+
+- 在字段说明表格中标注 `domID` 稳定性
 
 #### 应用价值
 
@@ -1987,7 +2080,7 @@ if len(data['history']) > 0:
 }
 ```
 
-`**position` 字段取值**：
+`**position` 字段取值\*\*：
 
 - `"single"` - 独立消息（`above=false, below=false`）
 - `"first"` - 消息组第一条（`above=false, below=true`）
@@ -1996,7 +2089,7 @@ if len(data['history']) > 0:
 
 #### 新增方法
 
-`**MessageGroup.get_position()`**:
+`**MessageGroup.get_position()`\*\*:
 
 - 根据DOM属性自动判断消息位置
 - 返回中文描述字符串
@@ -2063,21 +2156,19 @@ if data['refer']:
 
 通过 `data-has-message-above` 和 `data-has-message-below` 属性组合，可以精确识别消息在组中的位置：
 
-
-| 属性组合                       | 位置      | 特征            |
-| -------------------------- | ------- | ------------- |
-| `above=false, below=false` | 单条消息组   | 独立消息，有完整头部    |
-| `above=false, below=true`  | 消息组第一条  | 有完整头部，下方有同组消息 |
-| `above=true, below=true`   | 消息组中间   | 无头部，需继承信息     |
-| `above=true, below=false`  | 消息组最后一条 | 可能有头像，但无完整头部  |
-
+| 属性组合                   | 位置           | 特征                       |
+| -------------------------- | -------------- | -------------------------- |
+| `above=false, below=false` | 单条消息组     | 独立消息，有完整头部       |
+| `above=false, below=true`  | 消息组第一条   | 有完整头部，下方有同组消息 |
+| `above=true, below=true`   | 消息组中间     | 无头部，需继承信息         |
+| `above=true, below=false`  | 消息组最后一条 | 可能有头像，但无完整头部   |
 
 **新增方法** (`DOMStructureHelper`):
 
 ```python
 - is_single_message_group()  # 单条消息组
 - is_first_in_group()        # 消息组第一条
-- is_middle_in_group()       # 消息组中间消息  
+- is_middle_in_group()       # 消息组中间消息
 - is_last_in_group()         # 消息组最后一条
 ```
 
@@ -2097,8 +2188,12 @@ if data['refer']:
 
 ```javascript
 // 优先从精确的span中提取
-const quoteTextSpan = quoteEl.querySelector('[class*="fui-Text"][class*="truncate"]');
-const quoteText = quoteTextSpan ? quoteTextSpan.textContent : quoteEl.textContent;
+const quoteTextSpan = quoteEl.querySelector(
+  '[class*="fui-Text"][class*="truncate"]',
+);
+const quoteText = quoteTextSpan
+  ? quoteTextSpan.textContent
+  : quoteEl.textContent;
 ```
 
 #### 新增文档
@@ -2158,19 +2253,19 @@ const quoteText = quoteTextSpan ? quoteTextSpan.textContent : quoteEl.textConten
 
 ```javascript
 // 消息容器 (真实DOM)
-'.group\\/message[data-message-id]'  // <div class="group/message" data-message-id="...">
+".group\\/message[data-message-id]"; // <div class="group/message" data-message-id="...">
 
 // 用户名 (真实DOM)
-'span[role="button"].truncate.fui-HoverCardTrigger'  // <span role="button" class="...">
+'span[role="button"].truncate.fui-HoverCardTrigger'; // <span role="button" class="...">
 
 // 时间戳 (真实DOM)
-'.inline-flex.items-center.gap-1'  // <span>•</span><span>Jan 23, 2026 12:51 AM</span>
+".inline-flex.items-center.gap-1"; // <span>•</span><span>Jan 23, 2026 12:51 AM</span>
 
 // 消息气泡 (真实DOM)
-'.bg-gray-3[class*="rounded"]'  // <div class="bg-gray-3 rounded-[18px]">
+'.bg-gray-3[class*="rounded"]'; // <div class="bg-gray-3 rounded-[18px]">
 
 // 引用消息 (真实DOM)
-'.peer\\/reply'  // <div class="peer/reply relative mb-1.5">
+".peer\\/reply"; // <div class="peer/reply relative mb-1.5">
 ```
 
 **DOM层级关系识别**：
@@ -2192,20 +2287,25 @@ const quoteText = quoteTextSpan ? quoteTextSpan.textContent : quoteEl.textConten
 **匹配策略**：
 
 1. **关键信息提取**：
-  - 股票代码 (GILD, NVDA)
-  - 价格 ($130, 1.5-1.60)
-  - 操作方向 (BUY, SELL, STOP)
-  - 关键词
+
+- 股票代码 (GILD, NVDA)
+- 价格 ($130, 1.5-1.60)
+- 操作方向 (BUY, SELL, STOP)
+- 关键词
+
 2. **相似度计算** (0-1分数)：
-  - 股票代码匹配: 40分
-  - 价格匹配: 20分
-  - 操作方向匹配: 15分
-  - 关键词匹配: 最高15分
-  - 文本包含关系: 10分
+
+- 股票代码匹配: 40分
+- 价格匹配: 20分
+- 操作方向匹配: 15分
+- 关键词匹配: 最高15分
+- 文本包含关系: 10分
+
 3. **上下文辅助**：
-  - 作者匹配
-  - 日期匹配
-  - 自动降低阈值重试
+
+- 作者匹配
+- 日期匹配
+- 自动降低阈值重试
 
 **示例**：
 
@@ -2278,30 +2378,32 @@ best_match = QuoteMatcher.match_with_context(
 **消息组特征**：
 
 ```html
-<div class="group/message" 
-     data-message-id="post_1CXNbG1zAyv8MfM1oD7dEz"
-     data-has-message-above="false"
-     data-has-message-below="true">
+<div
+  class="group/message"
+  data-message-id="post_1CXNbG1zAyv8MfM1oD7dEz"
+  data-has-message-above="false"
+  data-has-message-below="true"
+>
   <!-- 头像（第一条或最后一条） -->
   <span class="fui-AvatarRoot size-8">...</span>
-  
+
   <!-- 用户名和时间戳 -->
   <span role="button" class="truncate fui-HoverCardTrigger">xiaozhaolucky</span>
   <span>•</span><span>Jan 22, 2026 10:41 PM</span>
-  
+
   <!-- 引用消息（可选） -->
   <div class="peer/reply">
     <span class="fui-Text truncate">GILD - $130 CALLS 这周 1.5-1.60</span>
   </div>
-  
+
   <!-- 消息气泡 -->
   <div class="bg-gray-3 rounded-[18px] px-3 py-1.5">
     <div class="whitespace-pre-wrap">
-      <p>小仓位 止损 在 1.3<br></p>
+      <p>小仓位 止损 在 1.3<br /></p>
     </div>
     <svg><title>Tail</title></svg>
   </div>
-  
+
   <!-- 阅读量 -->
   <span class="text-gray-11 text-0">由 179阅读</span>
 </div>
@@ -2375,7 +2477,7 @@ best_match = QuoteMatcher.match_with_context(
 - 💡 结构化字段展示
 
 ```
-                                 #4 BUY - LYFT                                  
+                                 #4 BUY - LYFT
 ╭────────────────────┬─────────────────────────────────────────────────────────╮
 │ 字段               │ 值                                                      │
 ├────────────────────┼─────────────────────────────────────────────────────────┤
@@ -2392,7 +2494,7 @@ best_match = QuoteMatcher.match_with_context(
 ╰────────────────────┴─────────────────────────────────────────────────────────╯
 
 统计信息表格：
-                                  📊 解析统计                                   
+                                  📊 解析统计
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║ 总消息数: 91 | 成功: 64 | 失败: 27 | 成功率: 70.3%                           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -2563,12 +2665,15 @@ Jan 20, 2026 10:37 PM  未识别    ✅ [修改] 未识别 止损: $1.0
 ### 🐛 已知问题
 
 1. 部分特殊格式未支持：
-  - `$XOM 1/16 $127 call 0.8-0.85` (日期在行权价前)
-  - `SPY - $680 CALLS 今天 $2.3` ("今天"关键词)
-  - `APLD - $40 CALLS下周的 $1.28` ("下周的"格式)
+
+- `$XOM 1/16 $127 call 0.8-0.85` (日期在行权价前)
+- `SPY - $680 CALLS 今天 $2.3` ("今天"关键词)
+- `APLD - $40 CALLS下周的 $1.28` ("下周的"格式)
+
 2. 卖出/修改指令ticker显示为"未识别"
-  - 原因：这些消息不包含ticker信息
-  - 解决方案：需要从上下文或分组信息中提取
+
+- 原因：这些消息不包含ticker信息
+- 解决方案：需要从上下文或分组信息中提取
 
 ### 🎯 下一步计划
 
@@ -2587,4 +2692,3 @@ Jan 20, 2026 10:37 PM  未识别    ✅ [修改] 未识别 止损: $1.0
 - 实现基本的消息提取和分组功能
 - 支持多种期权消息格式解析
 - 实现流式处理和实时输出
-
