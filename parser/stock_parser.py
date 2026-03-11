@@ -21,6 +21,78 @@ except ImportError:
 class StockParser:
     """正股指令解析器"""
 
+    # 中文股票名兜底映射（主流股票）
+    STOCK_NAME_ALIASES = {
+        # 科技股
+        "台积电": "TSM",
+        "特斯拉": "TSLA",
+        "英伟达": "NVDA",
+        "苹果": "AAPL",
+        "微软": "MSFT",
+        "谷歌": "GOOGL",
+        "亚马逊": "AMZN",
+        "超微": "AMD",
+        "奈飞": "NFLX",
+        "脸书": "META",
+        "英特尔": "INTC",
+        "高通": "QCOM",
+        "博通": "AVGO",
+        "思科": "CSCO",
+        "甲骨文": "ORCL",
+        "德州仪器": "TXN",
+        "应用材料": "AMAT",
+        "美光": "MU",
+        "阿斯麦": "ASML",
+        # 金融股
+        "伯克希尔": "BRK.B",
+        "摩根大通": "JPM",
+        "高盛": "GS",
+        "摩根士丹利": "MS",
+        "花旗": "C",
+        "美国银行": "BAC",
+        "富国银行": "WFC",
+        # 消费股
+        "可口可乐": "KO",
+        "百事可乐": "PEP",
+        "宝洁": "PG",
+        "耐克": "NKE",
+        "星巴克": "SBUX",
+        "麦当劳": "MCD",
+        "沃尔玛": "WMT",
+        "好市多": "COST",
+        # 医药股
+        "强生": "JNJ",
+        "辉瑞": "PFE",
+        "默沙东": "MRK",
+        "艾伯维": "ABBV",
+        "礼来": "LLY",
+        # 能源股
+        "埃克森美孚": "XOM",
+        "雪佛龙": "CVX",
+        # 工业股
+        "波音": "BA",
+        "卡特彼勒": "CAT",
+        "通用电气": "GE",
+        "霍尼韦尔": "HON",
+        # 通信股
+        "威瑞森": "VZ",
+        "美国电话电报": "T",
+        # 中概股
+        "阿里巴巴": "BABA",
+        "拼多多": "PDD",
+        "京东": "JD",
+        "百度": "BIDU",
+        "网易": "NTES",
+        "哔哩哔哩": "BILI",
+        "蔚来": "NIO",
+        "小鹏": "XPEV",
+        "理想": "LI",
+        "腾讯音乐": "TME",
+        "携程": "TCOM",
+        "新东方": "EDU",
+        "好未来": "TAL",
+    }
+
     BUY_PATTERN_1 = re.compile(
         r'([A-Z]{2,5})\s+(?:买入|买)\s+\$?(\d+(?:\.\d+)?)',
         re.IGNORECASE
@@ -479,6 +551,8 @@ class StockParser:
         """
         message = message.strip().replace('。', '.')
         message = message.replace('\u2013', '-').replace('\u2014', '-').replace('\u2012', '-').replace('\u2015', '-')
+        # 清洗：移除"转弯时候出 / 转弯的时候出"等干扰短语，避免误匹配卖出
+        message = re.sub(r'转弯的?时候出', '', message).strip()
         if not message:
             return None
 
@@ -502,6 +576,13 @@ class StockParser:
             instruction = cls._parse_with_watched_ticker(message, message_id, ticker)
             if instruction:
                 return instruction
+
+        # 中文股票名映射 fallback：从 STOCK_NAME_ALIASES 中匹配中文名转换为 ticker
+        for ticker in cls._alias_tickers_in_message(message):
+            instruction = cls._parse_with_watched_ticker(message, message_id, ticker)
+            if instruction:
+                return instruction
+
         return None
 
     # 买入：数量按历史参考
@@ -537,6 +618,17 @@ class StockParser:
     def _sort_range(cls, p1: float, p2: float) -> Tuple[float, float]:
         """确保价格区间低价在前。"""
         return (min(p1, p2), max(p1, p2))
+
+    @classmethod
+    def _alias_tickers_in_message(cls, message: str) -> List[str]:
+        """从中文股票名映射中找出消息里出现的 ticker，按名称长度降序匹配。"""
+        if not message:
+            return []
+        found = []
+        for name, ticker in sorted(cls.STOCK_NAME_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
+            if name in message:
+                found.append(ticker.upper())
+        return list(dict.fromkeys(found))  # 去重保持顺序
 
     @classmethod
     def _watched_tickers_in_message(cls, message: str) -> List[str]:
